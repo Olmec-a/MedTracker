@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
+// Shared enums
+enum SideEffectIntensity {
+  SIDE_EFFECT_INTENSITY_UNSPECIFIED = 0;
+  SIDE_EFFECT_INTENSITY_LOW = 1;
+  SIDE_EFFECT_INTENSITY_MEDIUM = 2;
+  SIDE_EFFECT_INTENSITY_HIGH = 3;
+  SIDE_EFFECT_INTENSITY_SEVERE = 4;
+}
+
+enum CycleIntensity {
+  CYCLE_INTENSITY_UNSPECIFIED = 0;
+  CYCLE_INTENSITY_LIGHT = 1;
+  CYCLE_INTENSITY_MODERATE = 2;
+  CYCLE_INTENSITY_HEAVY = 3;
+  CYCLE_INTENSITY_VERY_HEAVY = 4;
+}
+
+// Shared messages
+message PaginationRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message DateRangeFilter {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+}

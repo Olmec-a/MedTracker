@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/timestamp.proto";
+
+service AdminService {
+  rpc ImportMedicationData(stream ImportChunk) returns (ImportResultResponse);
+  rpc GetImportHistory(ImportHistoryRequest) returns (ImportHistoryResponse);
+}
+
+message ImportChunk {
+  bytes chunk_data = 1;
+  string file_name = 2;
+  string diagnosis_name = 3;
+}
+
+message ImportResultResponse {
+  bool success = 1;
+  int32 medications_imported = 2;
+  int32 supplements_imported = 3;
+  int32 side_effects_imported = 4;
+  string message = 5;
+}
+
+message ImportHistoryRequest {}
+
+message ImportHistoryResponse {
+  repeated ImportRecord records = 1;
+}
+
+message ImportRecord {
+  string id = 1;
+  string file_name = 2;
+  string diagnosis_name = 3;
+  int32 records_imported = 4;
+  google.protobuf.Timestamp imported_at = 5;
+  string imported_by = 6;
+}

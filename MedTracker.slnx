@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="MedTracker.Application/MedTracker.Application.csproj" />
+  <Project Path="MedTracker.Domain/MedTracker.Domain.csproj" />
+  <Project Path="MedTracker.Grpc/MedTracker.Grpc.csproj" />
+  <Project Path="MedTracker.Infrastructure/MedTracker.Infrastructure.csproj" />
+</Solution>

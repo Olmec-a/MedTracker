@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "common.proto";
+
+service MenstrualCycleService {
+  rpc AddCycleEntry(AddCycleEntryRequest) returns (CycleEntryResponse);
+  rpc UpdateCycleEntry(UpdateCycleEntryRequest) returns (CycleEntryResponse);
+  rpc GetCycleHistory(CycleHistoryQuery) returns (CycleEntriesListResponse);
+  rpc DeleteCycleEntry(DeleteCycleEntryRequest) returns (google.protobuf.Empty);
+}
+
+message AddCycleEntryRequest {
+  google.protobuf.Timestamp start_date = 1;
+  google.protobuf.Timestamp end_date = 2; // optional
+  CycleIntensity intensity = 3;
+  repeated string symptoms = 4;
+  google.protobuf.StringValue notes = 5;
+}
+
+message UpdateCycleEntryRequest {
+  string id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+  CycleIntensity intensity = 4;
+  repeated string symptoms = 5;
+  google.protobuf.StringValue notes = 6;
+}
+
+message CycleEntryResponse {
+  string id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+  CycleIntensity intensity = 4;
+  repeated string symptoms = 5;
+  string notes = 6;
+}
+
+message CycleHistoryQuery {
+  DateRangeFilter date_range = 1;
+  PaginationRequest pagination = 2;
+}
+
+message CycleEntriesListResponse {
+  repeated CycleEntryResponse entries = 1;
+  int32 total_count = 2;
+}
+
+message DeleteCycleEntryRequest {
+  string id = 1;
+}

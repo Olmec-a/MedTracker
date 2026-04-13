@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+service UserMedicationService {
+  rpc AssignMedication(AssignMedicationRequest) returns (UserMedicationResponse);
+  rpc RemoveMedication(RemoveMedicationRequest) returns (google.protobuf.Empty);
+  rpc GetMyMedications(google.protobuf.Empty) returns (UserMedicationsListResponse);
+  rpc AssignSupplement(AssignSupplementRequest) returns (UserSupplementResponse);
+  rpc RemoveSupplement(RemoveSupplementRequest) returns (google.protobuf.Empty);
+  rpc GetMySupplements(google.protobuf.Empty) returns (UserSupplementsListResponse);
+}
+
+message AssignMedicationRequest {
+  string medication_id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3; // optional, can be null
+}
+
+message RemoveMedicationRequest {
+  string user_medication_id = 1;
+}
+
+message UserMedicationResponse {
+  string id = 1;
+  string medication_id = 2;
+  string medication_trade_name = 3;
+  string medication_inn = 4;
+  google.protobuf.Timestamp start_date = 5;
+  google.protobuf.Timestamp end_date = 6;
+  bool is_active = 7;
+}
+
+message UserMedicationsListResponse {
+  repeated UserMedicationResponse medications = 1;
+}
+
+message AssignSupplementRequest {
+  string supplement_id = 1;
+  google.protobuf.Timestamp start_date = 2;
+  google.protobuf.Timestamp end_date = 3;
+}
+
+message RemoveSupplementRequest {
+  string user_supplement_id = 1;
+}
+
+message UserSupplementResponse {
+  string id = 1;
+  string supplement_id = 2;
+  string supplement_name = 3;
+  google.protobuf.Timestamp start_date = 4;
+  google.protobuf.Timestamp end_date = 5;
+  bool is_active = 6;
+}
+
+message UserSupplementsListResponse {
+  repeated UserSupplementResponse supplements = 1;
+}

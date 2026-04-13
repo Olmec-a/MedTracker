@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "common.proto";
+
+service SideEffectLogService {
+  rpc LogSideEffect(LogSideEffectRequest) returns (SideEffectLogResponse);
+  rpc GetMySideEffectLogs(SideEffectLogsQuery) returns (SideEffectLogsListResponse);
+  rpc DeleteSideEffectLog(DeleteLogRequest) returns (google.protobuf.Empty);
+}
+
+message LogSideEffectRequest {
+  string side_effect_id = 1;
+  google.protobuf.Timestamp date = 2;
+  SideEffectIntensity intensity = 3;
+  google.protobuf.StringValue comment = 4;
+}
+
+message SideEffectLogResponse {
+  string id = 1;
+  string side_effect_id = 2;
+  string side_effect_name = 3;
+  google.protobuf.Timestamp date = 4;
+  SideEffectIntensity intensity = 5;
+  string comment = 6;
+}
+
+message SideEffectLogsQuery {
+  DateRangeFilter date_range = 1;
+  PaginationRequest pagination = 2;
+}
+
+message SideEffectLogsListResponse {
+  repeated SideEffectLogResponse logs = 1;
+  int32 total_count = 2;
+}
+
+message DeleteLogRequest {
+  string log_id = 1;
+}

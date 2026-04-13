@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+option csharp_namespace = "MedTracker.Grpc.Protos";
+
+package medtracker;
+
+import "google/protobuf/empty.proto";
+
+service MedicationCatalogService {
+  rpc GetDiagnoses(google.protobuf.Empty) returns (DiagnosesListResponse);
+  rpc GetMedicationsByDiagnosis(DiagnosisIdRequest) returns (MedicationsListResponse);
+  rpc GetSupplementsByMedication(MedicationIdRequest) returns (SupplementsListResponse);
+  rpc GetSideEffectsByMedication(MedicationIdRequest) returns (SideEffectsListResponse);
+}
+
+message DiagnosisIdRequest {
+  string diagnosis_id = 1;
+}
+
+message MedicationIdRequest {
+  string medication_id = 1;
+}
+
+message DiagnosisDto {
+  string id = 1;
+  string name = 2;
+}
+
+message DiagnosesListResponse {
+  repeated DiagnosisDto diagnoses = 1;
+}
+
+message MedicationDto {
+  string id = 1;
+  string diagnosis_id = 2;
+  string hormonal_group = 3;
+  string inn = 4;
+  string trade_name = 5;
+  string dosage = 6;
+  string form = 7;
+  string frequency = 8;
+  string diet = 9;
+}
+
+message MedicationsListResponse {
+  repeated MedicationDto medications = 1;
+}
+
+message SupplementDto {
+  string id = 1;
+  string medication_id = 2;
+  string name = 3;
+  string dosage = 4;
+  string frequency = 5;
+}
+
+message SupplementsListResponse {
+  repeated SupplementDto supplements = 1;
+}
+
+message SideEffectDto {
+  string id = 1;
+  string medication_id = 2;
+  string name = 3;
+}
+
+message SideEffectsListResponse {
+  repeated SideEffectDto side_effects = 1;
+}
