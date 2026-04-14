@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="compose.yaml" />
+  </Folder>
   <Project Path="MedTracker.Application/MedTracker.Application.csproj" />
   <Project Path="MedTracker.Domain/MedTracker.Domain.csproj" />
   <Project Path="MedTracker.Grpc/MedTracker.Grpc.csproj" />

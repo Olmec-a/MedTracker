@@ -39,6 +39,7 @@ public static class DependencyInjection
 
         // Services
         services.AddSingleton<IJwtService, JwtService>();
+        services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddScoped<IExcelImportService, ExcelImportService>();
 
         // JWT Authentication

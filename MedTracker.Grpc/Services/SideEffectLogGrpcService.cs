@@ -23,7 +23,7 @@ public class SideEffectLogGrpcService : SideEffectLogService.SideEffectLogServic
             Guid.Parse(request.SideEffectId),
             request.Date.ToDateTime(),
             (Domain.Enums.SideEffectIntensity)(int)request.Intensity,
-            request.Comment?.Value);
+            string.IsNullOrEmpty(request.Comment) ? null : request.Comment);
         var result = await _service.LogSideEffectAsync(userId, dto, context.CancellationToken);
         return ToResponse(result);
     }

@@ -11,6 +11,7 @@ public class AuthService : IAuthService
     private readonly IUserRepository _userRepo;
     private readonly IRefreshTokenRepository _refreshTokenRepo;
     private readonly IJwtService _jwtService;
+    private readonly IPasswordHasher _passwordHasher;
     private readonly IValidator<RegisterDto> _registerValidator;
     private readonly IValidator<LoginDto> _loginValidator;
 
@@ -18,12 +19,14 @@ public class AuthService : IAuthService
         IUserRepository userRepo,
         IRefreshTokenRepository refreshTokenRepo,
         IJwtService jwtService,
+        IPasswordHasher passwordHasher,
         IValidator<RegisterDto> registerValidator,
         IValidator<LoginDto> loginValidator)
     {
         _userRepo = userRepo;
         _refreshTokenRepo = refreshTokenRepo;
         _jwtService = jwtService;
+        _passwordHasher = passwordHasher;
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
     }
@@ -43,7 +46,7 @@ public class AuthService : IAuthService
         var user = new User
         {
             Login = dto.Login,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+            PasswordHash = _passwordHasher.Hash(dto.Password),
             FullName = dto.FullName,
             Age = dto.Age
         };
@@ -66,7 +69,7 @@ public class AuthService : IAuthService
         var user = await _userRepo.GetByLoginAsync(dto.Login, ct)
             ?? throw new UnauthorizedException("Invalid login or password.");
 
-        if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
+        if (!_passwordHasher.Verify(dto.Password, user.PasswordHash))
             throw new UnauthorizedException("Invalid login or password.");
 
         return await GenerateTokensAsync(user, ct);

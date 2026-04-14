@@ -38,7 +38,7 @@ public class ExcelImportService : IExcelImportService
 
     public async Task<ImportResultDto> ImportAsync(byte[] fileBytes, string fileName, string diagnosisName, Guid importedByUserId, CancellationToken ct = default)
     {
-        ExcelPackage.License.SetNonCommercialOrganization("MedTracker");
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
         var diagnosis = await _db.Diagnoses.FirstOrDefaultAsync(d => d.Name == diagnosisName, ct)
             ?? throw new NotFoundException(nameof(Diagnosis), diagnosisName);

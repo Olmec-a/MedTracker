@@ -3,7 +3,7 @@ using Grpc.Core;
 using MedTracker.Application.DTOs;
 using MedTracker.Application.Interfaces;
 using MedTracker.Grpc.Interceptors;
-
+using MedTracker.Grpc.Protos;
 
 namespace MedTracker.Grpc.Services;
 
@@ -23,7 +23,7 @@ public class ExternalMedicationGrpcService : ExternalMedicationService.ExternalM
             request.Name,
             request.Dosage,
             request.Date.ToDateTime(),
-            request.Comment?.Value);
+            string.IsNullOrEmpty(request.Comment) ? null : request.Comment);
         var result = await _service.AddAsync(userId, dto, context.CancellationToken);
         return ToResponse(result);
     }

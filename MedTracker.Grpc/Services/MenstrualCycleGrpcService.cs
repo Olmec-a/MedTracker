@@ -5,6 +5,7 @@ using MedTracker.Application.Interfaces;
 using MedTracker.Domain.Enums;
 using MedTracker.Grpc.Interceptors;
 using MedTracker.Grpc.Protos;
+using CycleIntensity = MedTracker.Domain.Enums.CycleIntensity;
 
 namespace MedTracker.Grpc.Services;
 
@@ -25,7 +26,7 @@ public class MenstrualCycleGrpcService : MenstrualCycleService.MenstrualCycleSer
             request.EndDate?.ToDateTime(),
             (CycleIntensity)(int)request.Intensity,
             request.Symptoms.ToList(),
-            request.Notes?.Value);
+            string.IsNullOrEmpty(request.Notes) ? null : request.Notes);
         var result = await _service.AddEntryAsync(userId, dto, context.CancellationToken);
         return ToResponse(result);
     }
@@ -39,7 +40,7 @@ public class MenstrualCycleGrpcService : MenstrualCycleService.MenstrualCycleSer
             request.EndDate?.ToDateTime(),
             (CycleIntensity)(int)request.Intensity,
             request.Symptoms.ToList(),
-            request.Notes?.Value);
+            string.IsNullOrEmpty(request.Notes) ? null : request.Notes);
         var result = await _service.UpdateEntryAsync(userId, dto, context.CancellationToken);
         return ToResponse(result);
     }

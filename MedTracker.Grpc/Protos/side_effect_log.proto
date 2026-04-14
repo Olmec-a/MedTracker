@@ -7,7 +7,7 @@ package medtracker;
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
-import "common.proto";
+import "Protos/common.proto";
 
 service SideEffectLogService {
   rpc LogSideEffect(LogSideEffectRequest) returns (SideEffectLogResponse);

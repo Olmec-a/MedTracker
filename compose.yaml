@@ -1,0 +1,42 @@
+﻿services:
+  medtracker-db:
+    image: postgres:16-alpine
+    container_name: medtracker-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: medtracker
+    ports:
+      - "5433:5432"
+    volumes:
+      - medtracker-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d medtracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  medtracker-api:
+    build:
+      context: .
+      dockerfile: MedTracker.Grpc/Dockerfile
+    container_name: medtracker-api
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: "http://+:5001"
+      ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=medtracker;Username=postgres;Password=postgres"
+      Jwt__Secret: "SuperSecretKeyAtLeast32Characters!!"
+      Jwt__Issuer: "MedTracker"
+      Jwt__Audience: "MedTrackerClients"
+      Jwt__AccessTokenLifetimeMinutes: "15"
+    depends_on:
+      medtracker-db:
+        condition: service_healthy
+
+volumes:
+  medtracker-pgdata:

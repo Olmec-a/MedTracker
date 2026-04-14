@@ -2,6 +2,12 @@ using MedTracker.Application.DTOs;
 
 namespace MedTracker.Application.Interfaces;
 
+public interface IPasswordHasher
+{
+    string Hash(string password);
+    bool Verify(string password, string hash);
+}
+
 public interface IAuthService
 {
     Task<AuthResultDto> RegisterAsync(RegisterDto dto, CancellationToken ct = default);

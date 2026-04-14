@@ -1,9 +1,9 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
-using MedTracker.Application.DTOs;
 using MedTracker.Application.Interfaces;
 using MedTracker.Grpc.Interceptors;
 using MedTracker.Grpc.Protos;
+using AppDtos = MedTracker.Application.DTOs;
 
 namespace MedTracker.Grpc.Services;
 
@@ -26,7 +26,7 @@ public class UserProfileGrpcService : UserProfileService.UserProfileServiceBase
     public override async Task<UserProfileResponse> UpdateProfile(UpdateProfileRequest request, ServerCallContext context)
     {
         var userId = context.GetUserId();
-        var dto = new UpdateProfileDto(request.FullName, request.Age);
+        var dto = new AppDtos.UpdateProfileDto(request.FullName, request.Age);
         var profile = await _service.UpdateProfileAsync(userId, dto, context.CancellationToken);
         return ToResponse(profile);
     }
@@ -46,7 +46,7 @@ public class UserProfileGrpcService : UserProfileService.UserProfileServiceBase
         return ToResponse(diagnoses);
     }
 
-    private static UserProfileResponse ToResponse(UserProfileDto dto) => new()
+    private static UserProfileResponse ToResponse(AppDtos.UserProfileDto dto) => new()
     {
         Id = dto.Id.ToString(),
         Login = dto.Login,
@@ -56,10 +56,10 @@ public class UserProfileGrpcService : UserProfileService.UserProfileServiceBase
         UpdatedAt = Timestamp.FromDateTime(DateTime.SpecifyKind(dto.UpdatedAt, DateTimeKind.Utc))
     };
 
-    private static UserDiagnosesResponse ToResponse(List<UserDiagnosisDto> dtos)
+    private static UserDiagnosesResponse ToResponse(List<AppDtos.UserDiagnosisDto> dtos)
     {
         var response = new UserDiagnosesResponse();
-        response.Diagnoses.AddRange(dtos.Select(d => new UserDiagnosisDto
+        response.Diagnoses.AddRange(dtos.Select(d => new Protos.UserDiagnosisDto
         {
             DiagnosisId = d.DiagnosisId.ToString(),
             DiagnosisName = d.DiagnosisName,
