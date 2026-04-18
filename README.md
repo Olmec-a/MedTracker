@@ -36,6 +36,8 @@ cp .env.example .env
 openssl rand -base64 48
 # Вставь результат в .env как JWT_SECRET=...
 
+##КИНУ ГОТОВЫЙ .ENV  в личку
+
 # 3. Запусти
 docker-compose up --build
 ```
