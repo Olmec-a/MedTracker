@@ -58,11 +58,18 @@ public class ExcelImportService : IExcelImportService
                 headerMap[headerValue] = col;
         }
 
-        // Validate required columns
-        var requiredColumns = new[] { "Гормональные препараты", "МНН", "Торговое наименование", "Доза", "Форма применения", "Частота применения" };
+        // Validate required columns (accept either full name or short "МНН")
+        var hasInn = headerMap.ContainsKey("Международное непатентованное наименование") || headerMap.ContainsKey("МНН");
+        var requiredColumns = new[] { "Гормональные препараты", "Торговое наименование", "Доза", "Форма применения", "Частота применения" };
         var missingColumns = requiredColumns.Where(c => !headerMap.ContainsKey(c)).ToList();
+        if (!hasInn) missingColumns.Add("МНН (или Международное непатентованное наименование)");
         if (missingColumns.Count > 0)
             throw new ExcelImportException($"Missing required columns: {string.Join(", ", missingColumns)}");
+
+        // Resolve INN column name that's actually present
+        var innColumnName = headerMap.ContainsKey("Международное непатентованное наименование")
+            ? "Международное непатентованное наименование"
+            : "МНН";
 
         int medicationsImported = 0;
         int supplementsImported = 0;
@@ -74,7 +81,7 @@ public class ExcelImportService : IExcelImportService
         {
             for (int row = 2; row <= worksheet.Dimension.End.Row; row++)
             {
-                var inn = GetCellValue(worksheet, row, headerMap, "МНН");
+                var inn = GetCellValue(worksheet, row, headerMap, innColumnName);
                 var tradeName = GetCellValue(worksheet, row, headerMap, "Торговое наименование");
 
                 // Skip empty rows

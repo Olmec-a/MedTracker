@@ -8,6 +8,13 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Fail fast if JWT secret is weak
+var jwtSecret = builder.Configuration["Jwt:Secret"];
+if (string.IsNullOrEmpty(jwtSecret) || jwtSecret.Length < 32)
+    throw new InvalidOperationException(
+        "Jwt:Secret must be configured and at least 32 characters long. " +
+        "Generate with: openssl rand -base64 48");
+
 // Serilog
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -25,6 +32,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 // gRPC
 builder.Services.AddGrpc(options =>
 {
+    options.Interceptors.Add<RateLimitInterceptor>();
     options.Interceptors.Add<AuthInterceptor>();
     options.Interceptors.Add<ExceptionInterceptor>();
     options.MaxReceiveMessageSize = 50 * 1024 * 1024; // 50 MB for Excel uploads

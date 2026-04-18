@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/Solution Items/">
+    <File Path=".env" />
     <File Path="compose.yaml" />
   </Folder>
   <Project Path="MedTracker.Application/MedTracker.Application.csproj" />

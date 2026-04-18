@@ -10,6 +10,10 @@ public class User : AuditableEntity
     public int Age { get; set; }
     public UserRole Role { get; set; } = UserRole.User;
 
+    // Lockout protection
+    public int FailedLoginAttempts { get; set; }
+    public DateTime? LockoutUntil { get; set; }
+
     // Navigation properties
     public ICollection<UserDiagnosis> UserDiagnoses { get; set; } = new List<UserDiagnosis>();
     public ICollection<UserMedication> UserMedications { get; set; } = new List<UserMedication>();

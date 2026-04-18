@@ -4,15 +4,15 @@
     container_name: medtracker-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: medtracker
+      POSTGRES_USER: ${POSTGRES_USER:?missing}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing}
+      POSTGRES_DB: ${POSTGRES_DB:?missing}
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - medtracker-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d medtracker"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,11 +29,11 @@
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: "http://+:5001"
-      ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=medtracker;Username=postgres;Password=postgres"
-      Jwt__Secret: "SuperSecretKeyAtLeast32Characters!!"
-      Jwt__Issuer: "MedTracker"
-      Jwt__Audience: "MedTrackerClients"
-      Jwt__AccessTokenLifetimeMinutes: "15"
+      ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      Jwt__Secret: ${JWT_SECRET:?missing}
+      Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
+      Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
+      Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
     depends_on:
       medtracker-db:
         condition: service_healthy

@@ -14,6 +14,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(e => e.PasswordHash).IsRequired();
         builder.Property(e => e.FullName).HasMaxLength(200).IsRequired();
         builder.Property(e => e.Role).HasConversion<string>().HasMaxLength(20);
+        builder.Property(e => e.FailedLoginAttempts).HasDefaultValue(0);
     }
 }
 
@@ -53,13 +54,14 @@ public class MedicationConfiguration : IEntityTypeConfiguration<Medication>
     public void Configure(EntityTypeBuilder<Medication> builder)
     {
         builder.HasKey(e => e.Id);
-        builder.Property(e => e.HormonalGroup).HasMaxLength(300);
-        builder.Property(e => e.INN).HasMaxLength(300);
-        builder.Property(e => e.TradeName).HasMaxLength(300);
-        builder.Property(e => e.Dosage).HasMaxLength(100);
-        builder.Property(e => e.Form).HasMaxLength(100);
-        builder.Property(e => e.Frequency).HasMaxLength(200);
-        builder.Property(e => e.Diet).HasMaxLength(2000);
+        // No length limits on text fields — справочные данные могут быть произвольной длины
+        builder.Property(e => e.HormonalGroup);
+        builder.Property(e => e.INN);
+        builder.Property(e => e.TradeName);
+        builder.Property(e => e.Dosage);
+        builder.Property(e => e.Form);
+        builder.Property(e => e.Frequency);
+        builder.Property(e => e.Diet);
 
         builder.HasOne(e => e.Diagnosis)
             .WithMany(d => d.Medications)
@@ -67,7 +69,6 @@ public class MedicationConfiguration : IEntityTypeConfiguration<Medication>
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(e => e.DiagnosisId);
-        builder.HasIndex(e => e.INN);
     }
 }
 
@@ -76,9 +77,9 @@ public class SupplementConfiguration : IEntityTypeConfiguration<Supplement>
     public void Configure(EntityTypeBuilder<Supplement> builder)
     {
         builder.HasKey(e => e.Id);
-        builder.Property(e => e.Name).HasMaxLength(300).IsRequired();
-        builder.Property(e => e.Dosage).HasMaxLength(100);
-        builder.Property(e => e.Frequency).HasMaxLength(200);
+        builder.Property(e => e.Name).IsRequired();
+        builder.Property(e => e.Dosage);
+        builder.Property(e => e.Frequency);
 
         builder.HasOne(e => e.Medication)
             .WithMany(m => m.Supplements)
@@ -94,7 +95,7 @@ public class SideEffectConfiguration : IEntityTypeConfiguration<SideEffect>
     public void Configure(EntityTypeBuilder<SideEffect> builder)
     {
         builder.HasKey(e => e.Id);
-        builder.Property(e => e.Name).HasMaxLength(500).IsRequired();
+        builder.Property(e => e.Name).IsRequired();
 
         builder.HasOne(e => e.Medication)
             .WithMany(m => m.SideEffects)

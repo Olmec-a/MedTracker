@@ -8,6 +8,9 @@ namespace MedTracker.Application.Services;
 
 public class AuthService : IAuthService
 {
+    private const int MaxFailedAttempts = 5;
+    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+
     private readonly IUserRepository _userRepo;
     private readonly IRefreshTokenRepository _refreshTokenRepo;
     private readonly IJwtService _jwtService;
@@ -69,8 +72,35 @@ public class AuthService : IAuthService
         var user = await _userRepo.GetByLoginAsync(dto.Login, ct)
             ?? throw new UnauthorizedException("Invalid login or password.");
 
+        // Check lockout
+        if (user.LockoutUntil.HasValue && user.LockoutUntil.Value > DateTime.UtcNow)
+        {
+            var minutesLeft = (int)Math.Ceiling((user.LockoutUntil.Value - DateTime.UtcNow).TotalMinutes);
+            throw new UnauthorizedException($"Account is locked. Try again in {minutesLeft} minute(s).");
+        }
+
         if (!_passwordHasher.Verify(dto.Password, user.PasswordHash))
+        {
+            user.FailedLoginAttempts++;
+            if (user.FailedLoginAttempts >= MaxFailedAttempts)
+            {
+                user.LockoutUntil = DateTime.UtcNow.Add(LockoutDuration);
+                user.FailedLoginAttempts = 0;
+                _userRepo.Update(user);
+                await _userRepo.SaveChangesAsync(ct);
+                throw new UnauthorizedException($"Too many failed attempts. Account locked for {LockoutDuration.TotalMinutes} minutes.");
+            }
+
+            _userRepo.Update(user);
+            await _userRepo.SaveChangesAsync(ct);
             throw new UnauthorizedException("Invalid login or password.");
+        }
+
+        // Reset counters on successful login
+        user.FailedLoginAttempts = 0;
+        user.LockoutUntil = null;
+        _userRepo.Update(user);
+        await _userRepo.SaveChangesAsync(ct);
 
         return await GenerateTokensAsync(user, ct);
     }
@@ -80,17 +110,39 @@ public class AuthService : IAuthService
         var storedToken = await _refreshTokenRepo.GetByTokenAsync(refreshToken, ct)
             ?? throw new UnauthorizedException("Invalid refresh token.");
 
-        if (storedToken.IsRevoked || storedToken.ExpiresAt < DateTime.UtcNow)
-            throw new UnauthorizedException("Refresh token is expired or revoked.");
+        // REPLAY DETECTION: если токен уже отозван — это попытка повторного использования.
+        // Инвалидируем все токены пользователя — потенциально компрометация.
+        if (storedToken.IsRevoked)
+        {
+            await _refreshTokenRepo.RevokeAllForUserAsync(storedToken.UserId, ct);
+            await _refreshTokenRepo.SaveChangesAsync(ct);
+            throw new UnauthorizedException("Refresh token replay detected. All sessions have been terminated.");
+        }
 
-        storedToken.IsRevoked = true;
-        storedToken.RevokedAt = DateTime.UtcNow;
-        _refreshTokenRepo.Update(storedToken);
+        if (storedToken.ExpiresAt < DateTime.UtcNow)
+            throw new UnauthorizedException("Refresh token is expired.");
 
         var user = await _userRepo.GetByIdAsync(storedToken.UserId, ct)
             ?? throw new NotFoundException(nameof(User), storedToken.UserId);
 
-        return await GenerateTokensAsync(user, ct);
+        // Rotate: отзываем старый, создаём новый, связываем в цепочку
+        var newRefreshToken = new RefreshToken
+        {
+            UserId = user.Id,
+            Token = _jwtService.GenerateRefreshToken(),
+            ExpiresAt = DateTime.UtcNow.AddDays(7)
+        };
+        await _refreshTokenRepo.AddAsync(newRefreshToken, ct);
+
+        storedToken.IsRevoked = true;
+        storedToken.RevokedAt = DateTime.UtcNow;
+        storedToken.ReplacedByTokenId = newRefreshToken.Id;
+        _refreshTokenRepo.Update(storedToken);
+
+        await _refreshTokenRepo.SaveChangesAsync(ct);
+
+        var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Login, user.Role.ToString());
+        return new AuthResultDto(accessToken, newRefreshToken.Token, _jwtService.GetExpiresAtUnix());
     }
 
     private async Task<AuthResultDto> GenerateTokensAsync(User user, CancellationToken ct)

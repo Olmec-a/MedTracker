@@ -10,4 +10,7 @@ public class RefreshToken : BaseEntity
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsRevoked { get; set; }
     public DateTime? RevokedAt { get; set; }
+
+    // Rotation chain — для detection replay-атаки
+    public Guid? ReplacedByTokenId { get; set; }
 }
