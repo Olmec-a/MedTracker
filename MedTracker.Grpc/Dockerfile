@@ -2,7 +2,6 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy solution and project files for layer caching
 COPY MedTracker.slnx .
 COPY MedTracker.Domain/MedTracker.Domain.csproj MedTracker.Domain/
 COPY MedTracker.Application/MedTracker.Application.csproj MedTracker.Application/
@@ -11,7 +10,6 @@ COPY MedTracker.Grpc/MedTracker.Grpc.csproj MedTracker.Grpc/
 
 RUN dotnet restore
 
-# Copy everything and build
 COPY . .
 WORKDIR /src/MedTracker.Grpc
 RUN dotnet publish -c Release -o /app/publish --no-restore
@@ -20,10 +18,13 @@ RUN dotnet publish -c Release -o /app/publish --no-restore
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# curl для healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
 
-ENV ASPNETCORE_URLS=http://+:5001
+RUN mkdir -p /app/keys /app/logs
 
-EXPOSE 5001
+EXPOSE 5001 5003
 
 ENTRYPOINT ["dotnet", "MedTracker.Grpc.dll"]

@@ -28,23 +28,26 @@ public class MedicationCatalogService : IMedicationCatalogService
         return diagnoses.Select(d => new DiagnosisDto(d.Id, d.Name)).ToList();
     }
 
-    public async Task<List<MedicationDto>> GetMedicationsByDiagnosisAsync(Guid diagnosisId, CancellationToken ct = default)
+    public async Task<PaginatedResultDto<MedicationDto>> GetMedicationsByDiagnosisAsync(Guid diagnosisId, int page, int pageSize, CancellationToken ct = default)
     {
-        var medications = await _medicationRepo.GetByDiagnosisIdAsync(diagnosisId, ct);
-        return medications.Select(m => new MedicationDto(
+        var (items, total) = await _medicationRepo.GetByDiagnosisIdAsync(diagnosisId, page, pageSize, ct);
+        var dtos = items.Select(m => new MedicationDto(
             m.Id, m.DiagnosisId, m.HormonalGroup, m.INN,
             m.TradeName, m.Dosage, m.Form, m.Frequency, m.Diet)).ToList();
+        return new PaginatedResultDto<MedicationDto>(dtos, total);
     }
 
-    public async Task<List<SupplementDto>> GetSupplementsByMedicationAsync(Guid medicationId, CancellationToken ct = default)
+    public async Task<PaginatedResultDto<SupplementDto>> GetSupplementsByMedicationAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default)
     {
-        var supplements = await _supplementRepo.GetByMedicationIdAsync(medicationId, ct);
-        return supplements.Select(s => new SupplementDto(s.Id, s.MedicationId, s.Name, s.Dosage, s.Frequency)).ToList();
+        var (items, total) = await _supplementRepo.GetByMedicationIdAsync(medicationId, page, pageSize, ct);
+        var dtos = items.Select(s => new SupplementDto(s.Id, s.MedicationId, s.Name, s.Dosage, s.Frequency)).ToList();
+        return new PaginatedResultDto<SupplementDto>(dtos, total);
     }
 
-    public async Task<List<SideEffectDto>> GetSideEffectsByMedicationAsync(Guid medicationId, CancellationToken ct = default)
+    public async Task<PaginatedResultDto<SideEffectDto>> GetSideEffectsByMedicationAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default)
     {
-        var sideEffects = await _sideEffectRepo.GetByMedicationIdAsync(medicationId, ct);
-        return sideEffects.Select(se => new SideEffectDto(se.Id, se.MedicationId, se.Name)).ToList();
+        var (items, total) = await _sideEffectRepo.GetByMedicationIdAsync(medicationId, page, pageSize, ct);
+        var dtos = items.Select(se => new SideEffectDto(se.Id, se.MedicationId, se.Name)).ToList();
+        return new PaginatedResultDto<SideEffectDto>(dtos, total);
     }
 }

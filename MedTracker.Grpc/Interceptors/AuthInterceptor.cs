@@ -3,6 +3,8 @@ using System.Security.Claims;
 using System.Text;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
+using MedTracker.Application.Interfaces;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
@@ -12,6 +14,8 @@ public class AuthInterceptor : Interceptor
 {
     private readonly IConfiguration _config;
     private readonly ILogger<AuthInterceptor> _logger;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IMemoryCache _userStatusCache;
 
     // Methods that don't require authentication
     private static readonly HashSet<string> AnonymousMethods = new(StringComparer.OrdinalIgnoreCase)
@@ -28,10 +32,16 @@ public class AuthInterceptor : Interceptor
         "/medtracker.AdminService/GetImportHistory"
     };
 
-    public AuthInterceptor(IConfiguration config, ILogger<AuthInterceptor> logger)
+    public AuthInterceptor(
+        IConfiguration config,
+        ILogger<AuthInterceptor> logger,
+        IServiceProvider serviceProvider,
+        IMemoryCache userStatusCache)
     {
         _config = config;
         _logger = logger;
+        _serviceProvider = serviceProvider;
+        _userStatusCache = userStatusCache;
     }
 
     public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
@@ -39,7 +49,7 @@ public class AuthInterceptor : Interceptor
         ServerCallContext context,
         UnaryServerMethod<TRequest, TResponse> continuation)
     {
-        AuthorizeRequest(context);
+        await AuthorizeRequestAsync(context);
         return await continuation(request, context);
     }
 
@@ -48,11 +58,11 @@ public class AuthInterceptor : Interceptor
         ServerCallContext context,
         ClientStreamingServerMethod<TRequest, TResponse> continuation)
     {
-        AuthorizeRequest(context);
+        await AuthorizeRequestAsync(context);
         return await continuation(requestStream, context);
     }
 
-    private void AuthorizeRequest(ServerCallContext context)
+    private async Task AuthorizeRequestAsync(ServerCallContext context)
     {
         var method = context.Method;
 
@@ -81,7 +91,36 @@ public class AuthInterceptor : Interceptor
         // Check admin role
         if (AdminMethods.Contains(method) && !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Admin role is required."));
+
+        // Verify user still exists and is not locked out (cached для производительности — 60s TTL)
+        await CheckUserStatusAsync(Guid.Parse(userId!));
     }
+
+    private async Task CheckUserStatusAsync(Guid userId)
+    {
+        var cacheKey = $"user-status:{userId}";
+
+        var status = await _userStatusCache.GetOrCreateAsync(cacheKey, async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
+
+            using var scope = _serviceProvider.CreateScope();
+            var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            var user = await userRepo.GetByIdAsync(userId);
+
+            return user == null
+                ? new UserStatus(Exists: false, LockoutUntil: null)
+                : new UserStatus(Exists: true, LockoutUntil: user.LockoutUntil);
+        });
+
+        if (status is null || !status.Exists)
+            throw new RpcException(new Status(StatusCode.Unauthenticated, "User no longer exists."));
+
+        if (status.LockoutUntil.HasValue && status.LockoutUntil.Value > DateTime.UtcNow)
+            throw new RpcException(new Status(StatusCode.Unauthenticated, "Account is locked."));
+    }
+
+    private record UserStatus(bool Exists, DateTime? LockoutUntil);
 
     private ClaimsPrincipal? ValidateToken(string token)
     {

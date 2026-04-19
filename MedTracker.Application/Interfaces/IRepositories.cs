@@ -25,17 +25,17 @@ public interface IDiagnosisRepository : IRepository<Diagnosis>
 
 public interface IMedicationRepository : IRepository<Medication>
 {
-    Task<List<Medication>> GetByDiagnosisIdAsync(Guid diagnosisId, CancellationToken ct = default);
+    Task<(List<Medication> Items, int TotalCount)> GetByDiagnosisIdAsync(Guid diagnosisId, int page, int pageSize, CancellationToken ct = default);
 }
 
 public interface ISupplementRepository : IRepository<Supplement>
 {
-    Task<List<Supplement>> GetByMedicationIdAsync(Guid medicationId, CancellationToken ct = default);
+    Task<(List<Supplement> Items, int TotalCount)> GetByMedicationIdAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default);
 }
 
 public interface ISideEffectRepository : IRepository<SideEffect>
 {
-    Task<List<SideEffect>> GetByMedicationIdAsync(Guid medicationId, CancellationToken ct = default);
+    Task<(List<SideEffect> Items, int TotalCount)> GetByMedicationIdAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default);
 }
 
 public interface IUserDiagnosisRepository
@@ -72,6 +72,8 @@ public interface IMenstrualCycleRepository : IRepository<MenstrualCycleEntry>
 {
     Task<(List<MenstrualCycleEntry> Items, int TotalCount)> GetByUserIdAsync(
         Guid userId, DateTime? from, DateTime? to, int page, int pageSize, CancellationToken ct = default);
+
+    Task<bool> HasOverlappingEntryAsync(Guid userId, DateTime startDate, DateTime? endDate, Guid? excludeId, CancellationToken ct = default);
 }
 
 public interface IRefreshTokenRepository : IRepository<RefreshToken>

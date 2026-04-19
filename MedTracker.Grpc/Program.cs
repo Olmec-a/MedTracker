@@ -3,7 +3,9 @@ using MedTracker.Grpc.Interceptors;
 using MedTracker.Grpc.Services;
 using MedTracker.Infrastructure;
 using MedTracker.Infrastructure.Data;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,14 +27,40 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
+// Kestrel endpoints
+builder.WebHost.ConfigureKestrel((context, options) =>
+{
+    // 5001 — HTTP/2 (gRPC без TLS) для Postman/grpcurl
+    options.ListenAnyIP(5001, listen =>
+        listen.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http2);
+
+    // 5003 — HTTP/1.1 для health-endpoint (Docker healthcheck через curl)
+    options.ListenAnyIP(5003, listen =>
+        listen.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1);
+});
+
 // Register layers
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// For user status cache in AuthInterceptor
+builder.Services.AddMemoryCache();
+
+// Persist DataProtection keys to /app/keys — survives container restarts
+// В production это volume-mount, чтобы ключи переживали перезапуск
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
+    .SetApplicationName("MedTracker");
+
+// Health checks: проверяем БД
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("database", HealthStatus.Unhealthy);
 
 // gRPC
 builder.Services.AddGrpc(options =>
 {
     options.Interceptors.Add<RateLimitInterceptor>();
+    options.Interceptors.Add<RequestSizeInterceptor>();
     options.Interceptors.Add<AuthInterceptor>();
     options.Interceptors.Add<ExceptionInterceptor>();
     options.MaxReceiveMessageSize = 50 * 1024 * 1024; // 50 MB for Excel uploads
@@ -61,6 +89,11 @@ app.MapGrpcService<AdminGrpcService>();
 
 if (app.Environment.IsDevelopment())
     app.MapGrpcReflectionService();
+
+// Health check endpoints (plain HTTP/1.1)
+app.MapHealthChecks("/health");       // проверка БД + сервиса
+app.MapHealthChecks("/health/ready"); // готов принимать трафик
+app.MapGet("/health/live", () => Results.Ok("alive")); // только liveness
 
 app.MapGet("/", () => "MedTracker gRPC service is running. Use a gRPC client to communicate.");
 

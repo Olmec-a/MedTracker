@@ -35,6 +35,19 @@ public class LoginDtoValidator : AbstractValidator<LoginDto>
     }
 }
 
+public class ChangePasswordDtoValidator : AbstractValidator<ChangePasswordDto>
+{
+    public ChangePasswordDtoValidator()
+    {
+        RuleFor(x => x.CurrentPassword).NotEmpty();
+        RuleFor(x => x.NewPassword)
+            .NotEmpty()
+            .MinimumLength(6).WithMessage("New password must be at least 6 characters.")
+            .MaximumLength(100)
+            .NotEqual(x => x.CurrentPassword).WithMessage("New password must differ from current.");
+    }
+}
+
 public class UpdateProfileDtoValidator : AbstractValidator<UpdateProfileDto>
 {
     public UpdateProfileDtoValidator()

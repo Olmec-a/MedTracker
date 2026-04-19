@@ -5,20 +5,28 @@ option csharp_namespace = "MedTracker.Grpc.Protos";
 package medtracker;
 
 import "google/protobuf/empty.proto";
+import "Protos/common.proto";
 
 service MedicationCatalogService {
   rpc GetDiagnoses(google.protobuf.Empty) returns (DiagnosesListResponse);
-  rpc GetMedicationsByDiagnosis(DiagnosisIdRequest) returns (MedicationsListResponse);
-  rpc GetSupplementsByMedication(MedicationIdRequest) returns (SupplementsListResponse);
-  rpc GetSideEffectsByMedication(MedicationIdRequest) returns (SideEffectsListResponse);
+  rpc GetMedicationsByDiagnosis(GetMedicationsRequest) returns (MedicationsListResponse);
+  rpc GetSupplementsByMedication(GetSupplementsRequest) returns (SupplementsListResponse);
+  rpc GetSideEffectsByMedication(GetSideEffectsRequest) returns (SideEffectsListResponse);
 }
 
-message DiagnosisIdRequest {
+message GetMedicationsRequest {
   string diagnosis_id = 1;
+  PaginationRequest pagination = 2;
 }
 
-message MedicationIdRequest {
+message GetSupplementsRequest {
   string medication_id = 1;
+  PaginationRequest pagination = 2;
+}
+
+message GetSideEffectsRequest {
+  string medication_id = 1;
+  PaginationRequest pagination = 2;
 }
 
 message DiagnosisDto {
@@ -44,6 +52,7 @@ message MedicationDto {
 
 message MedicationsListResponse {
   repeated MedicationDto medications = 1;
+  int32 total_count = 2;
 }
 
 message SupplementDto {
@@ -56,6 +65,7 @@ message SupplementDto {
 
 message SupplementsListResponse {
   repeated SupplementDto supplements = 1;
+  int32 total_count = 2;
 }
 
 message SideEffectDto {
@@ -66,4 +76,5 @@ message SideEffectDto {
 
 message SideEffectsListResponse {
   repeated SideEffectDto side_effects = 1;
+  int32 total_count = 2;
 }

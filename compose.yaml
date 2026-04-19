@@ -1,4 +1,6 @@
-﻿services:
+﻿version: "3.9"
+
+services:
   medtracker-db:
     image: postgres:16-alpine
     container_name: medtracker-db
@@ -26,17 +28,28 @@
     restart: unless-stopped
     ports:
       - "5001:5001"
+      - "5003:5003"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: "http://+:5001"
       ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       Jwt__Secret: ${JWT_SECRET:?missing}
       Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
       Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
       Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
+    volumes:
+      - medtracker-keys:/app/keys
+      - medtracker-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       medtracker-db:
         condition: service_healthy
 
 volumes:
   medtracker-pgdata:
+  medtracker-keys:
+  medtracker-logs:

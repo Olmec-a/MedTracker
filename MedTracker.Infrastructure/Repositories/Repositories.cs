@@ -61,8 +61,14 @@ public class MedicationRepository : Repository<Medication>, IMedicationRepositor
 {
     public MedicationRepository(AppDbContext db) : base(db) { }
 
-    public async Task<List<Medication>> GetByDiagnosisIdAsync(Guid diagnosisId, CancellationToken ct = default)
-        => await Set.Where(m => m.DiagnosisId == diagnosisId).ToListAsync(ct);
+    public async Task<(List<Medication> Items, int TotalCount)> GetByDiagnosisIdAsync(Guid diagnosisId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = Set.Where(m => m.DiagnosisId == diagnosisId);
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderBy(m => m.TradeName)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
+    }
 }
 
 // ── Supplement ──
@@ -70,8 +76,14 @@ public class SupplementRepository : Repository<Supplement>, ISupplementRepositor
 {
     public SupplementRepository(AppDbContext db) : base(db) { }
 
-    public async Task<List<Supplement>> GetByMedicationIdAsync(Guid medicationId, CancellationToken ct = default)
-        => await Set.Where(s => s.MedicationId == medicationId).ToListAsync(ct);
+    public async Task<(List<Supplement> Items, int TotalCount)> GetByMedicationIdAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = Set.Where(s => s.MedicationId == medicationId);
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderBy(s => s.Name)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
+    }
 }
 
 // ── SideEffect ──
@@ -79,8 +91,14 @@ public class SideEffectRepository : Repository<SideEffect>, ISideEffectRepositor
 {
     public SideEffectRepository(AppDbContext db) : base(db) { }
 
-    public async Task<List<SideEffect>> GetByMedicationIdAsync(Guid medicationId, CancellationToken ct = default)
-        => await Set.Where(se => se.MedicationId == medicationId).ToListAsync(ct);
+    public async Task<(List<SideEffect> Items, int TotalCount)> GetByMedicationIdAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = Set.Where(se => se.MedicationId == medicationId);
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderBy(se => se.Name)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
+    }
 }
 
 // ── UserDiagnosis ──
@@ -116,7 +134,7 @@ public class UserMedicationRepository : Repository<UserMedication>, IUserMedicat
 
     public async Task<List<UserMedication>> GetByUserIdAsync(Guid userId, bool activeOnly = false, CancellationToken ct = default)
     {
-        var query = Set.Include(um => um.Medication).Where(um => um.UserId == userId);
+        var query = Set.AsNoTracking().Include(um => um.Medication).Where(um => um.UserId == userId);
         if (activeOnly) query = query.Where(um => um.IsActive);
         return await query.OrderByDescending(um => um.StartDate).ToListAsync(ct);
     }
@@ -129,7 +147,7 @@ public class UserSupplementRepository : Repository<UserSupplement>, IUserSupplem
 
     public async Task<List<UserSupplement>> GetByUserIdAsync(Guid userId, bool activeOnly = false, CancellationToken ct = default)
     {
-        var query = Set.Include(us => us.Supplement).Where(us => us.UserId == userId);
+        var query = Set.AsNoTracking().Include(us => us.Supplement).Where(us => us.UserId == userId);
         if (activeOnly) query = query.Where(us => us.IsActive);
         return await query.OrderByDescending(us => us.StartDate).ToListAsync(ct);
     }
@@ -143,7 +161,7 @@ public class UserSideEffectLogRepository : Repository<UserSideEffectLog>, IUserS
     public async Task<(List<UserSideEffectLog> Items, int TotalCount)> GetByUserIdAsync(
         Guid userId, DateTime? from, DateTime? to, int page, int pageSize, CancellationToken ct = default)
     {
-        var query = Set.Include(l => l.SideEffect).Where(l => l.UserId == userId);
+        var query = Set.AsNoTracking().Include(l => l.SideEffect).Where(l => l.UserId == userId);
         if (from.HasValue) query = query.Where(l => l.Date >= from.Value);
         if (to.HasValue) query = query.Where(l => l.Date <= to.Value);
 
@@ -189,6 +207,20 @@ public class MenstrualCycleRepository : Repository<MenstrualCycleEntry>, IMenstr
         var items = await query.OrderByDescending(e => e.StartDate)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         return (items, total);
+    }
+
+    public async Task<bool> HasOverlappingEntryAsync(Guid userId, DateTime startDate, DateTime? endDate, Guid? excludeId, CancellationToken ct = default)
+    {
+        // Два интервала перекрываются, если: NewStart <= ExistingEnd И NewEnd >= ExistingStart
+        // Для nullable EndDate трактуем "без конца" как DateTime.MaxValue
+        var newEnd = endDate ?? DateTime.MaxValue;
+
+        var query = Set.Where(e => e.UserId == userId);
+        if (excludeId.HasValue)
+            query = query.Where(e => e.Id != excludeId.Value);
+
+        return await query.AnyAsync(e =>
+            startDate <= (e.EndDate ?? DateTime.MaxValue) && newEnd >= e.StartDate, ct);
     }
 }
 

@@ -30,6 +30,10 @@ public class MenstrualCycleService : IMenstrualCycleService
                 validation.Errors.GroupBy(e => e.PropertyName)
                     .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray()));
 
+        if (await _repo.HasOverlappingEntryAsync(userId, dto.StartDate, dto.EndDate, null, ct))
+            throw new DomainValidationException(
+                "DateRange", "This cycle entry overlaps with an existing one.");
+
         var entry = new MenstrualCycleEntry
         {
             UserId = userId,
@@ -59,6 +63,10 @@ public class MenstrualCycleService : IMenstrualCycleService
 
         if (entry.UserId != userId)
             throw new ForbiddenException();
+
+        if (await _repo.HasOverlappingEntryAsync(userId, dto.StartDate, dto.EndDate, dto.Id, ct))
+            throw new DomainValidationException(
+                "DateRange", "Updated dates overlap with another cycle entry.");
 
         entry.StartDate = dto.StartDate;
         entry.EndDate = dto.EndDate;

@@ -4,10 +4,14 @@ option csharp_namespace = "MedTracker.Grpc.Protos";
 
 package medtracker;
 
+import "google/protobuf/empty.proto";
+
 service AuthService {
   rpc Register(RegisterRequest) returns (AuthResponse);
   rpc Login(LoginRequest) returns (AuthResponse);
   rpc RefreshToken(RefreshTokenRequest) returns (AuthResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
+  rpc Logout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
 
 message RegisterRequest {
@@ -24,6 +28,11 @@ message LoginRequest {
 
 message RefreshTokenRequest {
   string refresh_token = 1;
+}
+
+message ChangePasswordRequest {
+  string current_password = 1;
+  string new_password = 2;
 }
 
 message AuthResponse {

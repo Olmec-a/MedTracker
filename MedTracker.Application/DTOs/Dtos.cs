@@ -6,6 +6,7 @@ namespace MedTracker.Application.DTOs;
 public record RegisterDto(string Login, string Password, string FullName, int Age);
 public record LoginDto(string Login, string Password);
 public record AuthResultDto(string AccessToken, string RefreshToken, long ExpiresAt);
+public record ChangePasswordDto(string CurrentPassword, string NewPassword);
 
 // User Profile
 public record UserProfileDto(

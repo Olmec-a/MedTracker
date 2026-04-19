@@ -13,6 +13,8 @@ public interface IAuthService
     Task<AuthResultDto> RegisterAsync(RegisterDto dto, CancellationToken ct = default);
     Task<AuthResultDto> LoginAsync(LoginDto dto, CancellationToken ct = default);
     Task<AuthResultDto> RefreshTokenAsync(string refreshToken, CancellationToken ct = default);
+    Task ChangePasswordAsync(Guid userId, ChangePasswordDto dto, CancellationToken ct = default);
+    Task LogoutAsync(Guid userId, CancellationToken ct = default);
 }
 
 public interface IJwtService
@@ -33,9 +35,9 @@ public interface IUserProfileService
 public interface IMedicationCatalogService
 {
     Task<List<DiagnosisDto>> GetDiagnosesAsync(CancellationToken ct = default);
-    Task<List<MedicationDto>> GetMedicationsByDiagnosisAsync(Guid diagnosisId, CancellationToken ct = default);
-    Task<List<SupplementDto>> GetSupplementsByMedicationAsync(Guid medicationId, CancellationToken ct = default);
-    Task<List<SideEffectDto>> GetSideEffectsByMedicationAsync(Guid medicationId, CancellationToken ct = default);
+    Task<PaginatedResultDto<MedicationDto>> GetMedicationsByDiagnosisAsync(Guid diagnosisId, int page, int pageSize, CancellationToken ct = default);
+    Task<PaginatedResultDto<SupplementDto>> GetSupplementsByMedicationAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default);
+    Task<PaginatedResultDto<SideEffectDto>> GetSideEffectsByMedicationAsync(Guid medicationId, int page, int pageSize, CancellationToken ct = default);
 }
 
 public interface IUserMedicationService
