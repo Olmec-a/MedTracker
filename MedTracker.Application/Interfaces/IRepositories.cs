@@ -14,8 +14,8 @@ public interface IRepository<T> where T : BaseEntity
 
 public interface IUserRepository : IRepository<User>
 {
-    Task<User?> GetByLoginAsync(string login, CancellationToken ct = default);
-    Task<bool> ExistsByLoginAsync(string login, CancellationToken ct = default);
+    Task<User?> GetByEmailAsync(string email, CancellationToken ct = default);
+    Task<bool> ExistsByEmailAsync(string email, CancellationToken ct = default);
 }
 
 public interface IDiagnosisRepository : IRepository<Diagnosis>
@@ -73,7 +73,8 @@ public interface IMenstrualCycleRepository : IRepository<MenstrualCycleEntry>
     Task<(List<MenstrualCycleEntry> Items, int TotalCount)> GetByUserIdAsync(
         Guid userId, DateTime? from, DateTime? to, int page, int pageSize, CancellationToken ct = default);
 
-    Task<bool> HasOverlappingEntryAsync(Guid userId, DateTime startDate, DateTime? endDate, Guid? excludeId, CancellationToken ct = default);
+    Task<bool> HasOverlappingEntryAsync(
+        Guid userId, DateTime startDate, DateTime? endDate, Guid? excludeId, CancellationToken ct = default);
 }
 
 public interface IRefreshTokenRepository : IRepository<RefreshToken>
@@ -85,4 +86,17 @@ public interface IRefreshTokenRepository : IRepository<RefreshToken>
 public interface IImportRecordRepository : IRepository<ImportRecord>
 {
     Task<List<ImportRecord>> GetAllOrderedAsync(CancellationToken ct = default);
+}
+
+/// <summary>Outbox-репозиторий для гарантированной доставки писем.</summary>
+public interface IOutboxRepository
+{
+    Task AddAsync(OutboxMessage message, CancellationToken ct = default);
+
+    /// <summary>Атомарно блокирует и возвращает партию необработанных сообщений на время <paramref name="lockDuration"/>.</summary>
+    Task<List<OutboxMessage>> ClaimBatchAsync(int batchSize, TimeSpan lockDuration, CancellationToken ct = default);
+
+    Task MarkProcessedAsync(Guid id, CancellationToken ct = default);
+    Task MarkFailedAsync(Guid id, string error, TimeSpan nextRetryDelay, CancellationToken ct = default);
+    Task<int> DeleteOldProcessedAsync(TimeSpan olderThan, CancellationToken ct = default);
 }

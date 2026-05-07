@@ -7,15 +7,18 @@ public class RegisterDtoValidator : AbstractValidator<RegisterDto>
 {
     public RegisterDtoValidator()
     {
-        RuleFor(x => x.Login)
-            .NotEmpty().WithMessage("Login is required.")
-            .MinimumLength(3).WithMessage("Login must be at least 3 characters.")
-            .MaximumLength(50).WithMessage("Login must not exceed 50 characters.");
+        RuleFor(x => x.Email)
+            .NotEmpty().WithMessage("Email is required.")
+            .EmailAddress().WithMessage("Email format is invalid.")
+            .MaximumLength(254).WithMessage("Email must not exceed 254 characters.");
 
         RuleFor(x => x.Password)
             .NotEmpty().WithMessage("Password is required.")
-            .MinimumLength(6).WithMessage("Password must be at least 6 characters.")
-            .MaximumLength(100);
+            .MinimumLength(8).WithMessage("Password must be at least 8 characters.")
+            .MaximumLength(100)
+            .Matches(@"[A-Z]").WithMessage("Password must contain an uppercase letter.")
+            .Matches(@"[a-z]").WithMessage("Password must contain a lowercase letter.")
+            .Matches(@"\d").WithMessage("Password must contain a digit.");
 
         RuleFor(x => x.FullName)
             .NotEmpty().WithMessage("Full name is required.")
@@ -30,7 +33,9 @@ public class LoginDtoValidator : AbstractValidator<LoginDto>
 {
     public LoginDtoValidator()
     {
-        RuleFor(x => x.Login).NotEmpty().WithMessage("Login is required.");
+        RuleFor(x => x.Email)
+            .NotEmpty().WithMessage("Email is required.")
+            .EmailAddress().WithMessage("Email format is invalid.");
         RuleFor(x => x.Password).NotEmpty().WithMessage("Password is required.");
     }
 }
@@ -42,9 +47,53 @@ public class ChangePasswordDtoValidator : AbstractValidator<ChangePasswordDto>
         RuleFor(x => x.CurrentPassword).NotEmpty();
         RuleFor(x => x.NewPassword)
             .NotEmpty()
-            .MinimumLength(6).WithMessage("New password must be at least 6 characters.")
+            .MinimumLength(8).WithMessage("New password must be at least 8 characters.")
             .MaximumLength(100)
+            .Matches(@"[A-Z]").WithMessage("Password must contain an uppercase letter.")
+            .Matches(@"[a-z]").WithMessage("Password must contain a lowercase letter.")
+            .Matches(@"\d").WithMessage("Password must contain a digit.")
             .NotEqual(x => x.CurrentPassword).WithMessage("New password must differ from current.");
+    }
+}
+
+public class ConfirmEmailDtoValidator : AbstractValidator<ConfirmEmailDto>
+{
+    public ConfirmEmailDtoValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Token).NotEmpty().MaximumLength(200);
+    }
+}
+
+public class ResendConfirmationDtoValidator : AbstractValidator<ResendConfirmationDto>
+{
+    public ResendConfirmationDtoValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+    }
+}
+
+public class RequestPasswordResetDtoValidator : AbstractValidator<RequestPasswordResetDto>
+{
+    public RequestPasswordResetDtoValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+    }
+}
+
+public class ResetPasswordDtoValidator : AbstractValidator<ResetPasswordDto>
+{
+    public ResetPasswordDtoValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Token).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.NewPassword)
+            .NotEmpty()
+            .MinimumLength(8).WithMessage("Password must be at least 8 characters.")
+            .MaximumLength(100)
+            .Matches(@"[A-Z]").WithMessage("Password must contain an uppercase letter.")
+            .Matches(@"[a-z]").WithMessage("Password must contain a lowercase letter.")
+            .Matches(@"\d").WithMessage("Password must contain a digit.");
     }
 }
 

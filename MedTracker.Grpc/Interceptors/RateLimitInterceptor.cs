@@ -6,7 +6,7 @@ namespace MedTracker.Grpc.Interceptors;
 
 /// <summary>
 /// In-memory sliding window rate limiter per IP per method.
-/// Для production заменить на распределённое хранилище (Redis).
+/// Для production заменить на распределённое хранилище (Redis) — это следующий блок плана.
 /// </summary>
 public class RateLimitInterceptor : Interceptor
 {
@@ -14,10 +14,18 @@ public class RateLimitInterceptor : Interceptor
 
     private static readonly Dictionary<string, RateLimitRule> _rules = new(StringComparer.OrdinalIgnoreCase)
     {
-        // method path → (max requests, window)
-        ["/medtracker.AuthService/Login"] = new(5, TimeSpan.FromMinutes(1)),
-        ["/medtracker.AuthService/Register"] = new(3, TimeSpan.FromHours(1)),
-        ["/medtracker.AuthService/RefreshToken"] = new(10, TimeSpan.FromMinutes(1))
+        // Auth — критично, жёсткие лимиты
+        ["/medtracker.AuthService/Login"]                = new(5, TimeSpan.FromMinutes(1)),
+        ["/medtracker.AuthService/Register"]             = new(3, TimeSpan.FromHours(1)),
+        ["/medtracker.AuthService/RefreshToken"]         = new(10, TimeSpan.FromMinutes(1)),
+
+        // Email confirmation — спам по email = боль для всех
+        ["/medtracker.AuthService/ResendConfirmation"]   = new(3, TimeSpan.FromHours(1)),
+        ["/medtracker.AuthService/ConfirmEmail"]         = new(10, TimeSpan.FromMinutes(5)),
+
+        // Password reset — тот же лимит, что у Register, но окно меньше
+        ["/medtracker.AuthService/RequestPasswordReset"] = new(3, TimeSpan.FromHours(1)),
+        ["/medtracker.AuthService/ResetPassword"]        = new(5, TimeSpan.FromMinutes(15))
     };
 
     private readonly ILogger<RateLimitInterceptor> _logger;

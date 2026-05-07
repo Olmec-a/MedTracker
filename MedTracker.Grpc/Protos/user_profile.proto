@@ -16,11 +16,14 @@ service UserProfileService {
 
 message UserProfileResponse {
   string id = 1;
-  string login = 2;
+  // login → email (поле №2 сохранено, чтобы не двигать остальные индексы)
+  string email = 2;
   string full_name = 3;
   int32 age = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
+  // Новое поле: статус подтверждения email
+  bool email_confirmed = 7;
 }
 
 message UpdateProfileRequest {

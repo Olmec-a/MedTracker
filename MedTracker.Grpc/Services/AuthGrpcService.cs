@@ -18,14 +18,14 @@ public class AuthGrpcService : AuthService.AuthServiceBase
 
     public override async Task<AuthResponse> Register(RegisterRequest request, ServerCallContext context)
     {
-        var dto = new RegisterDto(request.Login, request.Password, request.FullName, request.Age);
+        var dto = new RegisterDto(request.Email, request.Password, request.FullName, request.Age);
         var result = await _authService.RegisterAsync(dto, context.CancellationToken);
         return ToResponse(result);
     }
 
     public override async Task<AuthResponse> Login(LoginRequest request, ServerCallContext context)
     {
-        var dto = new LoginDto(request.Login, request.Password);
+        var dto = new LoginDto(request.Email, request.Password);
         var result = await _authService.LoginAsync(dto, context.CancellationToken);
         return ToResponse(result);
     }
@@ -48,6 +48,34 @@ public class AuthGrpcService : AuthService.AuthServiceBase
     {
         var userId = context.GetUserId();
         await _authService.LogoutAsync(userId, context.CancellationToken);
+        return new Empty();
+    }
+
+    public override async Task<Empty> ConfirmEmail(ConfirmEmailRequest request, ServerCallContext context)
+    {
+        var dto = new ConfirmEmailDto(request.Email, request.Token);
+        await _authService.ConfirmEmailAsync(dto, context.CancellationToken);
+        return new Empty();
+    }
+
+    public override async Task<Empty> ResendConfirmation(ResendConfirmationRequest request, ServerCallContext context)
+    {
+        var dto = new ResendConfirmationDto(request.Email);
+        await _authService.ResendConfirmationAsync(dto, context.CancellationToken);
+        return new Empty();
+    }
+
+    public override async Task<Empty> RequestPasswordReset(RequestPasswordResetRequest request, ServerCallContext context)
+    {
+        var dto = new RequestPasswordResetDto(request.Email);
+        await _authService.RequestPasswordResetAsync(dto, context.CancellationToken);
+        return new Empty();
+    }
+
+    public override async Task<Empty> ResetPassword(ResetPasswordRequest request, ServerCallContext context)
+    {
+        var dto = new ResetPasswordDto(request.Email, request.Token, request.NewPassword);
+        await _authService.ResetPasswordAsync(dto, context.CancellationToken);
         return new Empty();
     }
 

@@ -49,9 +49,10 @@ public class UserProfileGrpcService : UserProfileService.UserProfileServiceBase
     private static UserProfileResponse ToResponse(AppDtos.UserProfileDto dto) => new()
     {
         Id = dto.Id.ToString(),
-        Login = dto.Login,
+        Email = dto.Email,
         FullName = dto.FullName,
         Age = dto.Age,
+        EmailConfirmed = dto.EmailConfirmed,
         CreatedAt = Timestamp.FromDateTime(DateTime.SpecifyKind(dto.CreatedAt, DateTimeKind.Utc)),
         UpdatedAt = Timestamp.FromDateTime(DateTime.SpecifyKind(dto.UpdatedAt, DateTimeKind.Utc))
     };

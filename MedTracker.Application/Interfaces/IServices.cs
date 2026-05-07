@@ -15,14 +15,48 @@ public interface IAuthService
     Task<AuthResultDto> RefreshTokenAsync(string refreshToken, CancellationToken ct = default);
     Task ChangePasswordAsync(Guid userId, ChangePasswordDto dto, CancellationToken ct = default);
     Task LogoutAsync(Guid userId, CancellationToken ct = default);
+
+    // ── New: email confirmation & password reset ──
+    Task ConfirmEmailAsync(ConfirmEmailDto dto, CancellationToken ct = default);
+    Task ResendConfirmationAsync(ResendConfirmationDto dto, CancellationToken ct = default);
+    Task RequestPasswordResetAsync(RequestPasswordResetDto dto, CancellationToken ct = default);
+    Task ResetPasswordAsync(ResetPasswordDto dto, CancellationToken ct = default);
 }
 
 public interface IJwtService
 {
-    string GenerateAccessToken(Guid userId, string login, string role);
+    string GenerateAccessToken(Guid userId, string email, string role);
     string GenerateRefreshToken();
     long GetExpiresAtUnix();
 }
+
+/// <summary>
+/// Генерирует high-entropy токены и хеширует их для безопасного хранения.
+/// Используется для email confirmation и password reset.
+/// </summary>
+public interface ITokenGenerator
+{
+    /// <returns>Plaintext-токен (отправляется в письме) и его хеш (хранится в БД).</returns>
+    (string Plaintext, string Hash) GenerateToken();
+
+    /// <summary>Constant-time сравнение plaintext-токена с хранимым хешем.</summary>
+    bool Verify(string plaintext, string storedHash);
+}
+
+/// <summary>Низкоуровневая отправка письма (SendGrid в продакшне).</summary>
+public interface IEmailSender
+{
+    Task SendAsync(string toAddress, string subject, string htmlBody, string? plainBody = null, CancellationToken ct = default);
+}
+
+/// <summary>Рендерит HTML-шаблоны писем (на старте — простые строки в коде).</summary>
+public interface IEmailTemplateService
+{
+    EmailTemplate RenderConfirmation(string fullName, string confirmationUrl);
+    EmailTemplate RenderPasswordReset(string fullName, string resetUrl);
+}
+
+public record EmailTemplate(string Subject, string HtmlBody, string PlainBody);
 
 public interface IUserProfileService
 {

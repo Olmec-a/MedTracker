@@ -8,6 +8,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using SendGrid;
+using SendGrid.Extensions.DependencyInjection;
 
 namespace MedTracker.Infrastructure;
 
@@ -36,15 +38,46 @@ public static class DependencyInjection
         services.AddScoped<IMenstrualCycleRepository, MenstrualCycleRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IImportRecordRepository, ImportRecordRepository>();
+        services.AddScoped<IOutboxRepository, OutboxRepository>();
 
-        // Services
+        // Auth helpers
         services.AddSingleton<IJwtService, JwtService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
+        services.AddSingleton<ITokenGenerator, TokenGenerator>();
         services.AddScoped<IExcelImportService, ExcelImportService>();
+
+        // Email + URL builder
+        services.Configure<SendGridOptions>(configuration.GetSection("SendGrid"));
+        services.Configure<AppUrlOptions>(configuration.GetSection("App"));
+        services.Configure<OutboxOptions>(configuration.GetSection("Outbox"));
+
+        services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
+        services.AddSingleton<IAppUrlBuilder, AppUrlBuilder>();
+
+        // SendGrid SDK — регистрируем клиента, если задан API key.
+        // На dev можно оставить пустым — IEmailSender бросит понятную ошибку,
+        // но регистрация не упадёт.
+        var sendGridApiKey = configuration["SendGrid:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(sendGridApiKey))
+        {
+            services.AddSendGrid(opt => opt.ApiKey = sendGridApiKey);
+        }
+        else
+        {
+            // Заглушка, чтобы DI не падал — реальные вызовы упадут с ясной ошибкой
+            services.AddSingleton<ISendGridClient>(_ => new SendGridClient(""));
+        }
+
+        services.AddScoped<IEmailSender, SendGridEmailSender>();
+
+        // Outbox background processor
+        services.AddHostedService<OutboxProcessor>();
 
         // JWT Authentication
         var jwtSecret = configuration["Jwt:Secret"]
             ?? throw new InvalidOperationException("JWT secret is not configured.");
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
@@ -57,12 +90,10 @@ public static class DependencyInjection
                     ValidateIssuerSigningKey = true,
                     ValidIssuer = configuration["Jwt:Issuer"],
                     ValidAudience = configuration["Jwt:Audience"],
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    IssuerSigningKey = key,
                     ClockSkew = TimeSpan.Zero
                 };
             });
-
-        services.AddAuthorization();
 
         return services;
     }

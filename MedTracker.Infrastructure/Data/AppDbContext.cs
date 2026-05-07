@@ -20,19 +20,18 @@ public class AppDbContext : DbContext
     public DbSet<MenstrualCycleEntry> MenstrualCycleEntries => Set<MenstrualCycleEntry>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<ImportRecord> ImportRecords => Set<ImportRecord>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
-        // Global query filter for soft-deletable entities
         modelBuilder.Entity<UserMedication>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<UserSupplement>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<UserSideEffectLog>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ExternalMedication>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<MenstrualCycleEntry>().HasQueryFilter(e => !e.IsDeleted);
 
-        // Seed diagnoses
         modelBuilder.Entity<Diagnosis>().HasData(
             new Diagnosis { Id = Guid.Parse("10000000-0000-0000-0000-000000000001"), Name = "ПМР" },
             new Diagnosis { Id = Guid.Parse("10000000-0000-0000-0000-000000000002"), Name = "СПКЯ" },

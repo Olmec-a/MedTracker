@@ -39,12 +39,12 @@ public class Repository<T> : IRepository<T> where T : BaseEntity
 public class UserRepository : Repository<User>, IUserRepository
 {
     public UserRepository(AppDbContext db) : base(db) { }
-
-    public async Task<User?> GetByLoginAsync(string login, CancellationToken ct = default)
-        => await Set.FirstOrDefaultAsync(u => u.Login == login, ct);
-
-    public async Task<bool> ExistsByLoginAsync(string login, CancellationToken ct = default)
-        => await Set.AnyAsync(u => u.Login == login, ct);
+ 
+    public async Task<User?> GetByEmailAsync(string email, CancellationToken ct = default)
+        => await Set.FirstOrDefaultAsync(u => u.Email == email, ct);
+ 
+    public async Task<bool> ExistsByEmailAsync(string email, CancellationToken ct = default)
+        => await Set.AnyAsync(u => u.Email == email, ct);
 }
 
 // ── Diagnosis ──

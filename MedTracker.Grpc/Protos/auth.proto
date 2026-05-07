@@ -12,17 +12,25 @@ service AuthService {
   rpc RefreshToken(RefreshTokenRequest) returns (AuthResponse);
   rpc ChangePassword(ChangePasswordRequest) returns (google.protobuf.Empty);
   rpc Logout(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Email confirmation
+  rpc ConfirmEmail(ConfirmEmailRequest) returns (google.protobuf.Empty);
+  rpc ResendConfirmation(ResendConfirmationRequest) returns (google.protobuf.Empty);
+
+  // Password reset
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (google.protobuf.Empty);
+  rpc ResetPassword(ResetPasswordRequest) returns (google.protobuf.Empty);
 }
 
 message RegisterRequest {
-  string login = 1;
+  string email = 1;
   string password = 2;
   string full_name = 3;
   int32 age = 4;
 }
 
 message LoginRequest {
-  string login = 1;
+  string email = 1;
   string password = 2;
 }
 
@@ -39,4 +47,23 @@ message AuthResponse {
   string access_token = 1;
   string refresh_token = 2;
   int64 expires_at = 3; // Unix timestamp
+}
+
+message ConfirmEmailRequest {
+  string email = 1;
+  string token = 2;
+}
+
+message ResendConfirmationRequest {
+  string email = 1;
+}
+
+message RequestPasswordResetRequest {
+  string email = 1;
+}
+
+message ResetPasswordRequest {
+  string email = 1;
+  string token = 2;
+  string new_password = 3;
 }

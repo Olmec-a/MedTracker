@@ -3,14 +3,20 @@ using MedTracker.Domain.Enums;
 namespace MedTracker.Application.DTOs;
 
 // Auth
-public record RegisterDto(string Login, string Password, string FullName, int Age);
-public record LoginDto(string Login, string Password);
+public record RegisterDto(string Email, string Password, string FullName, int Age);
+public record LoginDto(string Email, string Password);
 public record AuthResultDto(string AccessToken, string RefreshToken, long ExpiresAt);
 public record ChangePasswordDto(string CurrentPassword, string NewPassword);
 
-// User Profile
+// Email confirmation / password reset
+public record ConfirmEmailDto(string Email, string Token);
+public record ResendConfirmationDto(string Email);
+public record RequestPasswordResetDto(string Email);
+public record ResetPasswordDto(string Email, string Token, string NewPassword);
+
+// User Profile (Login → Email)
 public record UserProfileDto(
-    Guid Id, string Login, string FullName, int Age,
+    Guid Id, string Email, string FullName, int Age, bool EmailConfirmed,
     DateTime CreatedAt, DateTime UpdatedAt);
 public record UpdateProfileDto(string FullName, int Age);
 
@@ -54,9 +60,12 @@ public record MenstrualCycleDto(
     Guid Id, DateTime StartDate, DateTime? EndDate,
     CycleIntensity Intensity, List<string> Symptoms, string? Notes);
 
-// Import
-public record ImportResultDto(bool Success, int MedicationsImported, int SupplementsImported, int SideEffectsImported, string Message);
-public record ImportRecordDto(Guid Id, string FileName, string DiagnosisName, int RecordsImported, DateTime ImportedAt, string ImportedBy);
+// Import — оригинальные сигнатуры из проекта
+public record ImportResultDto(
+    bool Success, int MedicationsImported, int SupplementsImported, int SideEffectsImported, string Message);
+public record ImportRecordDto(
+    Guid Id, string FileName, string DiagnosisName, int RecordsImported,
+    DateTime ImportedAt, string ImportedBy);
 
 // Pagination
 public record PaginatedResultDto<T>(List<T> Items, int TotalCount);

@@ -4,20 +4,6 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace MedTracker.Infrastructure.Data.Configurations;
 
-public class UserConfiguration : IEntityTypeConfiguration<User>
-{
-    public void Configure(EntityTypeBuilder<User> builder)
-    {
-        builder.HasKey(e => e.Id);
-        builder.HasIndex(e => e.Login).IsUnique();
-        builder.Property(e => e.Login).HasMaxLength(50).IsRequired();
-        builder.Property(e => e.PasswordHash).IsRequired();
-        builder.Property(e => e.FullName).HasMaxLength(200).IsRequired();
-        builder.Property(e => e.Role).HasConversion<string>().HasMaxLength(20);
-        builder.Property(e => e.FailedLoginAttempts).HasDefaultValue(0);
-    }
-}
-
 public class DiagnosisConfiguration : IEntityTypeConfiguration<Diagnosis>
 {
     public void Configure(EntityTypeBuilder<Diagnosis> builder)

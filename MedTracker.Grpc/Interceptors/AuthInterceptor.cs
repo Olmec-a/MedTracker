@@ -22,10 +22,13 @@ public class AuthInterceptor : Interceptor
     {
         "/medtracker.AuthService/Register",
         "/medtracker.AuthService/Login",
-        "/medtracker.AuthService/RefreshToken"
+        "/medtracker.AuthService/RefreshToken",
+        "/medtracker.AuthService/ConfirmEmail",
+        "/medtracker.AuthService/ResendConfirmation",
+        "/medtracker.AuthService/RequestPasswordReset",
+        "/medtracker.AuthService/ResetPassword"
     };
 
-    // Methods that require Admin role
     private static readonly HashSet<string> AdminMethods = new(StringComparer.OrdinalIgnoreCase)
     {
         "/medtracker.AdminService/ImportMedicationData",
@@ -79,41 +82,34 @@ public class AuthInterceptor : Interceptor
         if (principal == null)
             throw new RpcException(new Status(StatusCode.Unauthenticated, "Invalid or expired token."));
 
-        // Store claims in UserState for downstream access
-        var userId = principal.FindFirstValue(JwtRegisteredClaimNames.Sub)
-            ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = principal.FindFirstValue(ClaimTypes.Role) ?? "User";
+        var userIdStr = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                       ?? principal.FindFirst("sub")?.Value;
+        if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
+            throw new RpcException(new Status(StatusCode.Unauthenticated, "Invalid user ID in token."));
 
-        context.UserState["UserId"] = userId!;
-        context.UserState["UserRole"] = role;
-        context.UserState["UserLogin"] = principal.FindFirstValue(JwtRegisteredClaimNames.UniqueName) ?? "";
+        var role = principal.FindFirst(ClaimTypes.Role)?.Value ?? "User";
 
-        // Check admin role
         if (AdminMethods.Contains(method) && !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Admin role is required."));
+            throw new RpcException(new Status(StatusCode.PermissionDenied, "Admin role required."));
 
-        // Verify user still exists and is not locked out (cached для производительности — 60s TTL)
-        await CheckUserStatusAsync(Guid.Parse(userId!));
+        await CheckUserStatusAsync(userId);
+
+        context.UserState["UserId"] = userIdStr;
+        context.UserState["UserRole"] = role;
     }
 
     private async Task CheckUserStatusAsync(Guid userId)
     {
-        var cacheKey = $"user-status:{userId}";
-
-        var status = await _userStatusCache.GetOrCreateAsync(cacheKey, async entry =>
+        var status = await _userStatusCache.GetOrCreateAsync($"user-status:{userId}", async entry =>
         {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
-
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2);
             using var scope = _serviceProvider.CreateScope();
-            var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-            var user = await userRepo.GetByIdAsync(userId);
-
-            return user == null
-                ? new UserStatus(Exists: false, LockoutUntil: null)
-                : new UserStatus(Exists: true, LockoutUntil: user.LockoutUntil);
+            var repo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            var user = await repo.GetByIdAsync(userId);
+            return new UserStatus(user != null, user?.LockoutUntil);
         });
 
-        if (status is null || !status.Exists)
+        if (status == null || !status.Exists)
             throw new RpcException(new Status(StatusCode.Unauthenticated, "User no longer exists."));
 
         if (status.LockoutUntil.HasValue && status.LockoutUntil.Value > DateTime.UtcNow)
@@ -152,7 +148,6 @@ public class AuthInterceptor : Interceptor
     }
 }
 
-// Extension to extract user info from ServerCallContext
 public static class ServerCallContextExtensions
 {
     public static Guid GetUserId(this ServerCallContext context)

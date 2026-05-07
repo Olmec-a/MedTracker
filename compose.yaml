@@ -36,6 +36,14 @@ services:
       Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
       Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
       Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
+
+      # SendGrid — без ApiKey письма копятся в Outbox и шлются после установки ключа
+      SendGrid__ApiKey: ${SENDGRID_API_KEY:-}
+      SendGrid__FromEmail: ${SENDGRID_FROM_EMAIL:-noreply@medtracker.local}
+      SendGrid__FromName: ${SENDGRID_FROM_NAME:-MedTracker}
+
+      # Публичный URL фронтенда — используется в ссылках в письмах
+      App__BaseUrl: ${APP_BASE_URL:-http://localhost:3000}
     volumes:
       - medtracker-keys:/app/keys
       - medtracker-logs:/app/logs

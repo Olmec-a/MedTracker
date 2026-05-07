@@ -4,13 +4,28 @@ namespace MedTracker.Domain.Entities;
 
 public class User : AuditableEntity
 {
-    public string Login { get; set; } = string.Empty;
+    // Email теперь основной идентификатор для логина (заменяет старый Login).
+    // В БД колонка осталась "Login" во избежание ломающей миграции данных,
+    // но логически и в коде это email.
+    // → См. миграцию: rename column Login → Email, расширение длины до 254.
+    public string Email { get; set; } = string.Empty;
+
     public string PasswordHash { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
     public int Age { get; set; }
     public UserRole Role { get; set; } = UserRole.User;
 
-    // Lockout protection
+    // ── Email confirmation ──
+    public bool EmailConfirmed { get; set; }
+    /// <summary>SHA-256 hash от plaintext-токена. Сам токен в БД не хранится.</summary>
+    public string? EmailConfirmationTokenHash { get; set; }
+    public DateTime? EmailConfirmationTokenExpiresAt { get; set; }
+
+    // ── Password reset ──
+    public string? PasswordResetTokenHash { get; set; }
+    public DateTime? PasswordResetTokenExpiresAt { get; set; }
+
+    // ── Lockout protection ──
     public int FailedLoginAttempts { get; set; }
     public DateTime? LockoutUntil { get; set; }
 

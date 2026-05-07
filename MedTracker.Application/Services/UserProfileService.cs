@@ -30,7 +30,7 @@ public class UserProfileService : IUserProfileService
         var user = await _userRepo.GetByIdAsync(userId, ct)
             ?? throw new NotFoundException(nameof(User), userId);
 
-        return new UserProfileDto(user.Id, user.Login, user.FullName, user.Age, user.CreatedAt, user.UpdatedAt);
+        return ToDto(user);
     }
 
     public async Task<UserProfileDto> UpdateProfileAsync(Guid userId, UpdateProfileDto dto, CancellationToken ct = default)
@@ -51,7 +51,7 @@ public class UserProfileService : IUserProfileService
         _userRepo.Update(user);
         await _userRepo.SaveChangesAsync(ct);
 
-        return new UserProfileDto(user.Id, user.Login, user.FullName, user.Age, user.CreatedAt, user.UpdatedAt);
+        return ToDto(user);
     }
 
     public async Task<List<UserDiagnosisDto>> AssignDiagnosesAsync(Guid userId, List<Guid> diagnosisIds, CancellationToken ct = default)
@@ -61,27 +61,29 @@ public class UserProfileService : IUserProfileService
 
         var diagnoses = await _diagnosisRepo.GetByIdsAsync(diagnosisIds, ct);
         if (diagnoses.Count != diagnosisIds.Count)
-            throw new NotFoundException(nameof(Diagnosis), string.Join(", ", diagnosisIds));
+            throw new NotFoundException(nameof(Diagnosis), "one or more IDs");
 
         await _userDiagnosisRepo.RemoveByUserIdAsync(userId, ct);
 
-        var userDiagnoses = diagnosisIds.Select(dId => new UserDiagnosis
+        var entries = diagnoses.Select(d => new UserDiagnosis
         {
             UserId = userId,
-            DiagnosisId = dId,
+            DiagnosisId = d.Id,
             AssignedAt = DateTime.UtcNow
         }).ToList();
 
-        await _userDiagnosisRepo.AddRangeAsync(userDiagnoses, ct);
+        await _userDiagnosisRepo.AddRangeAsync(entries, ct);
         await _userDiagnosisRepo.SaveChangesAsync(ct);
 
-        return await GetUserDiagnosesAsync(userId, ct);
+        return diagnoses.Select(d => new UserDiagnosisDto(d.Id, d.Name, DateTime.UtcNow)).ToList();
     }
 
     public async Task<List<UserDiagnosisDto>> GetUserDiagnosesAsync(Guid userId, CancellationToken ct = default)
     {
-        var userDiagnoses = await _userDiagnosisRepo.GetByUserIdAsync(userId, ct);
-        return userDiagnoses.Select(ud =>
-            new UserDiagnosisDto(ud.DiagnosisId, ud.Diagnosis.Name, ud.AssignedAt)).ToList();
+        var entries = await _userDiagnosisRepo.GetByUserIdAsync(userId, ct);
+        return entries.Select(e => new UserDiagnosisDto(e.DiagnosisId, e.Diagnosis.Name, e.AssignedAt)).ToList();
     }
+
+    private static UserProfileDto ToDto(User u)
+        => new(u.Id, u.Email, u.FullName, u.Age, u.EmailConfirmed, u.CreatedAt, u.UpdatedAt);
 }
