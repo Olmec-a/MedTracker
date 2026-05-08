@@ -1,37 +1,34 @@
-using System.Collections.Concurrent;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
+using MedTracker.Application.Interfaces;
 
 namespace MedTracker.Grpc.Interceptors;
 
 /// <summary>
-/// In-memory sliding window rate limiter per IP per method.
-/// Для production заменить на распределённое хранилище (Redis) — это следующий блок плана.
+/// Distributed rate limiter (Redis-backed). Корректно работает на нескольких репликах:
+/// атакующий не может обойти лимит, попадая на разные инстансы.
 /// </summary>
 public class RateLimitInterceptor : Interceptor
 {
-    private static readonly ConcurrentDictionary<string, List<DateTime>> _requests = new();
-
-    private static readonly Dictionary<string, RateLimitRule> _rules = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, RateLimitRule> Rules = new(StringComparer.OrdinalIgnoreCase)
     {
-        // Auth — критично, жёсткие лимиты
         ["/medtracker.AuthService/Login"]                = new(5, TimeSpan.FromMinutes(1)),
         ["/medtracker.AuthService/Register"]             = new(3, TimeSpan.FromHours(1)),
         ["/medtracker.AuthService/RefreshToken"]         = new(10, TimeSpan.FromMinutes(1)),
 
-        // Email confirmation — спам по email = боль для всех
         ["/medtracker.AuthService/ResendConfirmation"]   = new(3, TimeSpan.FromHours(1)),
         ["/medtracker.AuthService/ConfirmEmail"]         = new(10, TimeSpan.FromMinutes(5)),
 
-        // Password reset — тот же лимит, что у Register, но окно меньше
         ["/medtracker.AuthService/RequestPasswordReset"] = new(3, TimeSpan.FromHours(1)),
         ["/medtracker.AuthService/ResetPassword"]        = new(5, TimeSpan.FromMinutes(15))
     };
 
+    private readonly IRateLimiter _rateLimiter;
     private readonly ILogger<RateLimitInterceptor> _logger;
 
-    public RateLimitInterceptor(ILogger<RateLimitInterceptor> logger)
+    public RateLimitInterceptor(IRateLimiter rateLimiter, ILogger<RateLimitInterceptor> logger)
     {
+        _rateLimiter = rateLimiter;
         _logger = logger;
     }
 
@@ -40,36 +37,49 @@ public class RateLimitInterceptor : Interceptor
         ServerCallContext context,
         UnaryServerMethod<TRequest, TResponse> continuation)
     {
-        CheckRateLimit(context);
+        await CheckRateLimitAsync(context);
         return await continuation(request, context);
     }
 
-    private void CheckRateLimit(ServerCallContext context)
+    private async Task CheckRateLimitAsync(ServerCallContext context)
     {
-        if (!_rules.TryGetValue(context.Method, out var rule))
+        if (!Rules.TryGetValue(context.Method, out var rule))
             return;
 
-        var clientIp = context.Peer ?? "unknown";
-        var key = $"{clientIp}:{context.Method}";
-        var now = DateTime.UtcNow;
-        var windowStart = now - rule.Window;
+        // Peer обычно "ipv4:1.2.3.4:5678". Берём только адрес — без порта,
+        // иначе атакующий обходит лимит, переключая порт.
+        var peer = NormalizePeer(context.Peer);
+        var key = $"{peer}:{context.Method}";
 
-        var timestamps = _requests.GetOrAdd(key, _ => new List<DateTime>());
+        var result = await _rateLimiter.CheckAsync(key, rule.MaxRequests, rule.Window, context.CancellationToken);
 
-        lock (timestamps)
+        if (!result.Allowed)
         {
-            timestamps.RemoveAll(t => t < windowStart);
+            _logger.LogWarning(
+                "Rate limit exceeded for {Peer} on {Method}: {Current}/{Limit}, resets in {Reset}s",
+                peer, context.Method, result.CurrentCount, result.Limit, (int)result.ResetAfter.TotalSeconds);
 
-            if (timestamps.Count >= rule.MaxRequests)
-            {
-                _logger.LogWarning("Rate limit exceeded for {Peer} on {Method}", clientIp, context.Method);
-                throw new RpcException(new Status(
-                    StatusCode.ResourceExhausted,
-                    $"Rate limit exceeded. Max {rule.MaxRequests} requests per {rule.Window.TotalSeconds:0}s."));
-            }
+            // Стандартный gRPC retry-info: подсказка клиенту, через сколько повторять.
+            var trailers = new Metadata { { "retry-after-seconds", ((int)result.ResetAfter.TotalSeconds).ToString() } };
 
-            timestamps.Add(now);
+            throw new RpcException(
+                new Status(StatusCode.ResourceExhausted,
+                    $"Rate limit exceeded. Max {rule.MaxRequests} requests per {rule.Window.TotalSeconds:0}s. " +
+                    $"Try again in ~{(int)result.ResetAfter.TotalSeconds}s."),
+                trailers);
         }
+    }
+
+    private static string NormalizePeer(string? peer)
+    {
+        if (string.IsNullOrEmpty(peer)) return "unknown";
+        // "ipv4:1.2.3.4:5678" → "1.2.3.4"
+        // "ipv6:[::1]:5678"   → "::1"
+        var cleaned = peer.StartsWith("ipv4:") ? peer[5..]
+                    : peer.StartsWith("ipv6:") ? peer[5..]
+                    : peer;
+        var lastColon = cleaned.LastIndexOf(':');
+        return lastColon > 0 ? cleaned[..lastColon].Trim('[', ']') : cleaned;
     }
 
     private record RateLimitRule(int MaxRequests, TimeSpan Window);

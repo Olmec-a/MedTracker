@@ -4,20 +4,17 @@ using System.Text;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using MedTracker.Application.Interfaces;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 namespace MedTracker.Grpc.Interceptors;
 
+/// <summary>
+/// Auth interceptor с distributed user-status cache (HybridCache: L1 in-memory + L2 Redis).
+/// Заменяет старый IMemoryCache, который не работал в multi-replica.
+/// </summary>
 public class AuthInterceptor : Interceptor
 {
-    private readonly IConfiguration _config;
-    private readonly ILogger<AuthInterceptor> _logger;
-    private readonly IServiceProvider _serviceProvider;
-    private readonly IMemoryCache _userStatusCache;
-
-    // Methods that don't require authentication
     private static readonly HashSet<string> AnonymousMethods = new(StringComparer.OrdinalIgnoreCase)
     {
         "/medtracker.AuthService/Register",
@@ -35,15 +32,17 @@ public class AuthInterceptor : Interceptor
         "/medtracker.AdminService/GetImportHistory"
     };
 
+    private readonly IConfiguration _config;
+    private readonly ILogger<AuthInterceptor> _logger;
+    private readonly IUserStatusCache _userStatusCache;
+
     public AuthInterceptor(
         IConfiguration config,
         ILogger<AuthInterceptor> logger,
-        IServiceProvider serviceProvider,
-        IMemoryCache userStatusCache)
+        IUserStatusCache userStatusCache)
     {
         _config = config;
         _logger = logger;
-        _serviceProvider = serviceProvider;
         _userStatusCache = userStatusCache;
     }
 
@@ -67,14 +66,14 @@ public class AuthInterceptor : Interceptor
 
     private async Task AuthorizeRequestAsync(ServerCallContext context)
     {
-        var method = context.Method;
-
-        if (AnonymousMethods.Contains(method))
+        if (AnonymousMethods.Contains(context.Method))
             return;
 
         var authHeader = context.RequestHeaders.GetValue("authorization");
-        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            throw new RpcException(new Status(StatusCode.Unauthenticated, "Missing or invalid authorization token."));
+        if (string.IsNullOrEmpty(authHeader) ||
+            !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            throw new RpcException(new Status(StatusCode.Unauthenticated,
+                "Missing or invalid authorization token."));
 
         var token = authHeader["Bearer ".Length..].Trim();
         var principal = ValidateToken(token);
@@ -89,25 +88,19 @@ public class AuthInterceptor : Interceptor
 
         var role = principal.FindFirst(ClaimTypes.Role)?.Value ?? "User";
 
-        if (AdminMethods.Contains(method) && !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
+        if (AdminMethods.Contains(context.Method) &&
+            !string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Admin role required."));
 
-        await CheckUserStatusAsync(userId);
+        await CheckUserStatusAsync(userId, context.CancellationToken);
 
         context.UserState["UserId"] = userIdStr;
         context.UserState["UserRole"] = role;
     }
 
-    private async Task CheckUserStatusAsync(Guid userId)
+    private async Task CheckUserStatusAsync(Guid userId, CancellationToken ct)
     {
-        var status = await _userStatusCache.GetOrCreateAsync($"user-status:{userId}", async entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2);
-            using var scope = _serviceProvider.CreateScope();
-            var repo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-            var user = await repo.GetByIdAsync(userId);
-            return new UserStatus(user != null, user?.LockoutUntil);
-        });
+        var status = await _userStatusCache.GetAsync(userId, ct);
 
         if (status == null || !status.Exists)
             throw new RpcException(new Status(StatusCode.Unauthenticated, "User no longer exists."));
@@ -115,8 +108,6 @@ public class AuthInterceptor : Interceptor
         if (status.LockoutUntil.HasValue && status.LockoutUntil.Value > DateTime.UtcNow)
             throw new RpcException(new Status(StatusCode.Unauthenticated, "Account is locked."));
     }
-
-    private record UserStatus(bool Exists, DateTime? LockoutUntil);
 
     private ClaimsPrincipal? ValidateToken(string token)
     {

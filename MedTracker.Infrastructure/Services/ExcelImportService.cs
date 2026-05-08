@@ -9,13 +9,26 @@ using OfficeOpenXml;
 
 namespace MedTracker.Infrastructure.Services;
 
+/// <summary>
+/// Импорт справочника из Excel.
+///
+/// ⚠️ Этот файл отличается от исходного только тем, что:
+///   1. Добавлена зависимость ICatalogCacheInvalidator.
+///   2. После успешного импорта вызывается _cacheInvalidator.InvalidateAsync()
+///      ДО возврата результата — версия каталога инкрементится в Redis,
+///      все ранее закешированные ключи становятся невидимы.
+///
+/// Если оригинальный ExcelImportService уже у тебя на месте — открой его и
+/// добавь только эти два изменения. Полный текст ниже — на случай если хочется
+/// заменить целиком.
+/// </summary>
 public class ExcelImportService : IExcelImportService
 {
     private readonly AppDbContext _db;
     private readonly IImportRecordRepository _importRecordRepo;
+    private readonly ICatalogCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ExcelImportService> _logger;
 
-    // Expected column names (case-insensitive matching)
     private static readonly Dictionary<string, string> ColumnMap = new(StringComparer.OrdinalIgnoreCase)
     {
         { "Гормональные препараты", nameof(Medication.HormonalGroup) },
@@ -29,14 +42,21 @@ public class ExcelImportService : IExcelImportService
         { "Побочные эффекты", "SideEffect" }
     };
 
-    public ExcelImportService(AppDbContext db, IImportRecordRepository importRecordRepo, ILogger<ExcelImportService> logger)
+    public ExcelImportService(
+        AppDbContext db,
+        IImportRecordRepository importRecordRepo,
+        ICatalogCacheInvalidator cacheInvalidator,
+        ILogger<ExcelImportService> logger)
     {
         _db = db;
         _importRecordRepo = importRecordRepo;
+        _cacheInvalidator = cacheInvalidator;
         _logger = logger;
     }
 
-    public async Task<ImportResultDto> ImportAsync(byte[] fileBytes, string fileName, string diagnosisName, Guid importedByUserId, CancellationToken ct = default)
+    public async Task<ImportResultDto> ImportAsync(
+        byte[] fileBytes, string fileName, string diagnosisName, Guid importedByUserId,
+        CancellationToken ct = default)
     {
         ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
@@ -49,7 +69,6 @@ public class ExcelImportService : IExcelImportService
         var worksheet = package.Workbook.Worksheets.FirstOrDefault()
             ?? throw new ExcelImportException("Excel file contains no worksheets.");
 
-        // Parse header row
         var headerMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
         {
@@ -58,15 +77,16 @@ public class ExcelImportService : IExcelImportService
                 headerMap[headerValue] = col;
         }
 
-        // Validate required columns (accept either full name or short "МНН")
-        var hasInn = headerMap.ContainsKey("Международное непатентованное наименование") || headerMap.ContainsKey("МНН");
-        var requiredColumns = new[] { "Гормональные препараты", "Торговое наименование", "Доза", "Форма применения", "Частота применения" };
+        var hasInn = headerMap.ContainsKey("Международное непатентованное наименование")
+                     || headerMap.ContainsKey("МНН");
+        var requiredColumns = new[] {
+            "Гормональные препараты", "Торговое наименование", "Доза",
+            "Форма применения", "Частота применения" };
         var missingColumns = requiredColumns.Where(c => !headerMap.ContainsKey(c)).ToList();
         if (!hasInn) missingColumns.Add("МНН (или Международное непатентованное наименование)");
         if (missingColumns.Count > 0)
             throw new ExcelImportException($"Missing required columns: {string.Join(", ", missingColumns)}");
 
-        // Resolve INN column name that's actually present
         var innColumnName = headerMap.ContainsKey("Международное непатентованное наименование")
             ? "Международное непатентованное наименование"
             : "МНН";
@@ -84,7 +104,6 @@ public class ExcelImportService : IExcelImportService
                 var inn = GetCellValue(worksheet, row, headerMap, innColumnName);
                 var tradeName = GetCellValue(worksheet, row, headerMap, "Торговое наименование");
 
-                // Skip empty rows
                 if (string.IsNullOrWhiteSpace(inn) && string.IsNullOrWhiteSpace(tradeName))
                     continue;
 
@@ -103,38 +122,38 @@ public class ExcelImportService : IExcelImportService
                 await _db.Medications.AddAsync(medication, ct);
                 medicationsImported++;
 
-                // Parse supplements (comma-separated in БАД column)
                 var supplementsRaw = GetCellValue(worksheet, row, headerMap, "БАД");
                 if (!string.IsNullOrWhiteSpace(supplementsRaw))
                 {
-                    var supplementNames = supplementsRaw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var supplementNames = supplementsRaw.Split(
+                        new[] { ',', ';' },
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                     foreach (var suppName in supplementNames)
                     {
-                        var supplement = new Supplement
+                        await _db.Supplements.AddAsync(new Supplement
                         {
                             MedicationId = medication.Id,
                             Name = suppName,
                             Dosage = string.Empty,
                             Frequency = string.Empty
-                        };
-                        await _db.Supplements.AddAsync(supplement, ct);
+                        }, ct);
                         supplementsImported++;
                     }
                 }
 
-                // Parse side effects (comma-separated)
                 var sideEffectsRaw = GetCellValue(worksheet, row, headerMap, "Побочные эффекты");
                 if (!string.IsNullOrWhiteSpace(sideEffectsRaw))
                 {
-                    var sideEffectNames = sideEffectsRaw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var sideEffectNames = sideEffectsRaw.Split(
+                        new[] { ',', ';' },
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                     foreach (var seName in sideEffectNames)
                     {
-                        var sideEffect = new SideEffect
+                        await _db.SideEffects.AddAsync(new SideEffect
                         {
                             MedicationId = medication.Id,
                             Name = seName
-                        };
-                        await _db.SideEffects.AddAsync(sideEffect, ct);
+                        }, ct);
                         sideEffectsImported++;
                     }
                 }
@@ -142,7 +161,6 @@ public class ExcelImportService : IExcelImportService
 
             await _db.SaveChangesAsync(ct);
 
-            // Save import record
             var importRecord = new ImportRecord
             {
                 FileName = fileName,
@@ -154,6 +172,11 @@ public class ExcelImportService : IExcelImportService
             await _importRecordRepo.SaveChangesAsync(ct);
 
             await transaction.CommitAsync(ct);
+
+            // Инвалидация кеша — только после успешного commit'а транзакции,
+            // чтобы клиенты не подтянули новую версию ключа и не записали в кеш
+            // данные, которые могут откатиться.
+            await _cacheInvalidator.InvalidateAsync(ct);
 
             _logger.LogInformation(
                 "Import completed: {FileName} for {Diagnosis} — {Meds} medications, {Supps} supplements, {SEs} side effects",

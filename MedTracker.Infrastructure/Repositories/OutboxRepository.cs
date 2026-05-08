@@ -6,9 +6,14 @@ using Microsoft.EntityFrameworkCore;
 namespace MedTracker.Infrastructure.Repositories;
 
 /// <summary>
-/// Outbox-репозиторий с safe-claim семантикой через optimistic locking.
-/// На несколько реплик нужен FOR UPDATE SKIP LOCKED — пока используем
-/// LockedUntil + LockToken (worker safe).
+/// Outbox-репозиторий, безопасный для multi-replica.
+///
+/// ClaimBatchAsync использует Postgres FOR UPDATE SKIP LOCKED:
+/// - Транзакция блокирует выбранные строки → другие реплики их не увидят (SKIP LOCKED)
+/// - Внутри той же транзакции выставляем LockedUntil/LockToken
+/// - После COMMIT row-level lock отпускается, но LockedUntil "защищает" сообщение
+///   следующие N секунд — даже если этот воркер умер, никто не возьмёт сообщение
+///   до истечения lock'а.
 /// </summary>
 public class OutboxRepository : IOutboxRepository
 {
@@ -20,47 +25,54 @@ public class OutboxRepository : IOutboxRepository
     public async Task AddAsync(OutboxMessage message, CancellationToken ct = default)
         => await _db.OutboxMessages.AddAsync(message, ct);
 
-    public async Task<List<OutboxMessage>> ClaimBatchAsync(int batchSize, TimeSpan lockDuration, CancellationToken ct = default)
+    public async Task<List<OutboxMessage>> ClaimBatchAsync(
+        int batchSize, TimeSpan lockDuration, CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
-        var lockUntil = now.Add(lockDuration);
+        var lockUntil = DateTime.UtcNow.Add(lockDuration);
+        var newToken = Guid.NewGuid();
 
-        // Берём кандидатов: не обработанные, либо locker истёк, либо ещё не пришло время retry
-        var candidates = await _db.OutboxMessages
-            .Where(m => m.ProcessedAt == null
-                        && m.RetryCount < MaxRetryCount
-                        && (m.LockedUntil == null || m.LockedUntil < now)
-                        && (m.NextRetryAt == null || m.NextRetryAt <= now))
-            .OrderBy(m => m.CreatedAt)
-            .Take(batchSize)
-            .ToListAsync(ct);
-
-        if (candidates.Count == 0)
-            return new List<OutboxMessage>();
-
-        // Атомарно "захватываем" — обновляем токен + LockedUntil.
-        // Если другая реплика уже захватила — её LockToken будет другой,
-        // и наш UPDATE WHERE LockToken=oldToken не сработает.
-        var claimed = new List<OutboxMessage>();
-        foreach (var msg in candidates)
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
         {
-            var oldToken = msg.LockToken;
-            var newToken = Guid.NewGuid();
+            // FromSqlInterpolated с FOR UPDATE SKIP LOCKED.
+            // EF возвращает tracked entities — изменения лучше делать осторожно,
+            // но мы выходим из этого scope сразу после Commit и контекст scoped.
+            var claimed = await _db.OutboxMessages
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "OutboxMessages"
+                    WHERE "ProcessedAt" IS NULL
+                      AND "RetryCount" < {MaxRetryCount}
+                      AND ("LockedUntil" IS NULL OR "LockedUntil" < (NOW() AT TIME ZONE 'UTC'))
+                      AND ("NextRetryAt" IS NULL OR "NextRetryAt" <= (NOW() AT TIME ZONE 'UTC'))
+                    ORDER BY "CreatedAt"
+                    LIMIT {batchSize}
+                    FOR UPDATE SKIP LOCKED
+                    """)
+                .AsTracking()
+                .ToListAsync(ct);
 
-            var rows = await _db.OutboxMessages
-                .Where(m => m.Id == msg.Id && m.LockToken == oldToken)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(m => m.LockToken, newToken)
-                    .SetProperty(m => m.LockedUntil, lockUntil), ct);
+            if (claimed.Count == 0)
+            {
+                await transaction.CommitAsync(ct);
+                return new List<OutboxMessage>();
+            }
 
-            if (rows == 1)
+            foreach (var msg in claimed)
             {
                 msg.LockToken = newToken;
                 msg.LockedUntil = lockUntil;
-                claimed.Add(msg);
             }
+
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            return claimed;
         }
-        return claimed;
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
     }
 
     public async Task MarkProcessedAsync(Guid id, CancellationToken ct = default)
@@ -76,7 +88,6 @@ public class OutboxRepository : IOutboxRepository
     public async Task MarkFailedAsync(Guid id, string error, TimeSpan nextRetryDelay, CancellationToken ct = default)
     {
         var nextRetry = DateTime.UtcNow.Add(nextRetryDelay);
-        // Truncate error до разумной длины
         var truncated = error.Length > 2000 ? error[..2000] : error;
 
         await _db.OutboxMessages

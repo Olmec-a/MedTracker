@@ -4,12 +4,14 @@ using MedTracker.Infrastructure.Data;
 using MedTracker.Infrastructure.Repositories;
 using MedTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using SendGrid;
 using SendGrid.Extensions.DependencyInjection;
+using StackExchange.Redis;
 
 namespace MedTracker.Infrastructure;
 
@@ -17,13 +19,51 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        // PostgreSQL + EF Core
+        // ── PostgreSQL + EF Core ──
         services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(
                 configuration.GetConnectionString("DefaultConnection"),
                 npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
 
-        // Repositories
+        // ── Redis ──
+        var redisConnection = configuration.GetConnectionString("Redis")
+            ?? throw new InvalidOperationException(
+                "Redis connection string is not configured. Set ConnectionStrings:Redis.");
+
+        var redisOptions = ConfigurationOptions.Parse(redisConnection);
+        redisOptions.AbortOnConnectFail = false;
+        redisOptions.ConnectRetry = 3;
+        redisOptions.ConnectTimeout = 5000;
+
+        // Создаём multiplexer один раз и переиспользуем — для DI и для DataProtection.
+        // AbortOnConnectFail=false означает, что если Redis ещё не поднялся — Connect() не бросит,
+        // multiplexer перейдёт в "ConnectionFailed" state и будет переподключаться сам.
+        var multiplexer = ConnectionMultiplexer.Connect(redisOptions);
+        services.AddSingleton<IConnectionMultiplexer>(multiplexer);
+
+        // IDistributedCache на Redis — нужен HybridCache как L2.
+        services.AddStackExchangeRedisCache(opts =>
+        {
+            opts.Configuration = redisConnection;
+            opts.InstanceName = "medtracker:";
+        });
+
+        // HybridCache (L1 in-memory + L2 IDistributedCache).
+        services.AddHybridCache(opts =>
+        {
+            opts.DefaultEntryOptions = new Microsoft.Extensions.Caching.Hybrid.HybridCacheEntryOptions
+            {
+                Expiration = TimeSpan.FromMinutes(30),
+                LocalCacheExpiration = TimeSpan.FromMinutes(5)
+            };
+        });
+
+        // ── DataProtection: ключи в Redis — общий keyring для всех реплик ──
+        services.AddDataProtection()
+            .PersistKeysToStackExchangeRedis(multiplexer, "medtracker:DataProtection-Keys")
+            .SetApplicationName("MedTracker");
+
+        // ── Repositories ──
         services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IDiagnosisRepository, DiagnosisRepository>();
@@ -40,13 +80,13 @@ public static class DependencyInjection
         services.AddScoped<IImportRecordRepository, ImportRecordRepository>();
         services.AddScoped<IOutboxRepository, OutboxRepository>();
 
-        // Auth helpers
+        // ── Auth helpers ──
         services.AddSingleton<IJwtService, JwtService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenGenerator, TokenGenerator>();
         services.AddScoped<IExcelImportService, ExcelImportService>();
 
-        // Email + URL builder
+        // ── Email + URL builder ──
         services.Configure<SendGridOptions>(configuration.GetSection("SendGrid"));
         services.Configure<AppUrlOptions>(configuration.GetSection("App"));
         services.Configure<OutboxOptions>(configuration.GetSection("Outbox"));
@@ -54,29 +94,26 @@ public static class DependencyInjection
         services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
         services.AddSingleton<IAppUrlBuilder, AppUrlBuilder>();
 
-        // SendGrid SDK — регистрируем клиента, если задан API key.
-        // На dev можно оставить пустым — IEmailSender бросит понятную ошибку,
-        // но регистрация не упадёт.
         var sendGridApiKey = configuration["SendGrid:ApiKey"];
         if (!string.IsNullOrWhiteSpace(sendGridApiKey))
-        {
             services.AddSendGrid(opt => opt.ApiKey = sendGridApiKey);
-        }
         else
-        {
-            // Заглушка, чтобы DI не падал — реальные вызовы упадут с ясной ошибкой
             services.AddSingleton<ISendGridClient>(_ => new SendGridClient(""));
-        }
 
         services.AddScoped<IEmailSender, SendGridEmailSender>();
 
-        // Outbox background processor
+        // ── Redis-based abstractions (catalog cache, rate limiter, user-status cache) ──
+        services.AddSingleton<ICatalogVersionStore, CatalogVersionStore>();
+        services.AddSingleton<ICatalogCacheInvalidator, CatalogCacheInvalidator>();
+        services.AddSingleton<IRateLimiter, RedisRateLimiter>();
+        services.AddSingleton<IUserStatusCache, UserStatusCache>();
+
+        // ── Outbox background processor ──
         services.AddHostedService<OutboxProcessor>();
 
-        // JWT Authentication
+        // ── JWT Authentication ──
         var jwtSecret = configuration["Jwt:Secret"]
             ?? throw new InvalidOperationException("JWT secret is not configured.");
-
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

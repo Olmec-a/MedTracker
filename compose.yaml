@@ -20,32 +20,52 @@ services:
       retries: 5
       start_period: 10s
 
+  medtracker-redis:
+    image: redis:7-alpine
+    container_name: medtracker-redis
+    restart: unless-stopped
+    # appendonly yes — данные переживают рестарт (DataProtection-keys нужно сохранить)
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - medtracker-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   medtracker-api:
     build:
       context: .
       dockerfile: MedTracker.Grpc/Dockerfile
-    container_name: medtracker-api
+    # container_name УБРАН — несовместимо с replicas/scale.
+    # Теперь можно `docker compose up -d --scale medtracker-api=3`.
     restart: unless-stopped
+    # ports маппинг — только на одну реплику. Для multi-replica поставь nginx/envoy
+    # как gRPC LB в compose. На старте можно оставить scale=1.
     ports:
       - "5001:5001"
       - "5003:5003"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "medtracker-redis:6379"
+
       Jwt__Secret: ${JWT_SECRET:?missing}
       Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
       Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
       Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
 
-      # SendGrid — без ApiKey письма копятся в Outbox и шлются после установки ключа
       SendGrid__ApiKey: ${SENDGRID_API_KEY:-}
       SendGrid__FromEmail: ${SENDGRID_FROM_EMAIL:-noreply@medtracker.local}
       SendGrid__FromName: ${SENDGRID_FROM_NAME:-MedTracker}
 
-      # Публичный URL фронтенда — используется в ссылках в письмах
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:3000}
     volumes:
-      - medtracker-keys:/app/keys
+      # ВАЖНО: убрали /app/keys — DataProtection теперь хранит ключи в Redis
       - medtracker-logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5003/health/live"]
@@ -56,8 +76,10 @@ services:
     depends_on:
       medtracker-db:
         condition: service_healthy
+      medtracker-redis:
+        condition: service_healthy
 
 volumes:
   medtracker-pgdata:
-  medtracker-keys:
+  medtracker-redisdata:
   medtracker-logs:
