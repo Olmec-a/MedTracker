@@ -26,4 +26,11 @@ public class OutboxMessage : BaseEntity
     /// <summary>Optimistic concurrency token, чтобы две реплики не схватили одно сообщение.</summary>
     public Guid LockToken { get; set; } = Guid.NewGuid();
     public DateTime? LockedUntil { get; set; }
+    /// <summary>
+    /// CorrelationId исходного запроса, породившего это сообщение.
+    /// Используется для трассировки цепочки "API → outbox → Hangfire → SendGrid"
+    /// в логах через {CorrelationId} property.
+    /// Может быть null для сообщений из системных задач (cleanup и т.п.).
+    /// </summary>
+    public string? CorrelationId { get; set; }
 }

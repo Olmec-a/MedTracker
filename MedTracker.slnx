@@ -2,9 +2,12 @@
   <Folder Name="/Solution Items/">
     <File Path=".env" />
     <File Path="compose.yaml" />
+    <File Path="Nginx.conf" />
   </Folder>
   <Project Path="MedTracker.Application/MedTracker.Application.csproj" />
   <Project Path="MedTracker.Domain/MedTracker.Domain.csproj" />
   <Project Path="MedTracker.Grpc/MedTracker.Grpc.csproj" />
   <Project Path="MedTracker.Infrastructure/MedTracker.Infrastructure.csproj" />
+  <Project Path="MedTracker.IntegrationTests/MedTracker.IntegrationTests.csproj" />
+  <Project Path="MedTracker.Tests/MedTracker.Tests.csproj" />
 </Solution>

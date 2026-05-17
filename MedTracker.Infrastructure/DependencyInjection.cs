@@ -12,6 +12,9 @@ using Microsoft.IdentityModel.Tokens;
 using SendGrid;
 using SendGrid.Extensions.DependencyInjection;
 using StackExchange.Redis;
+using Hangfire;
+using Hangfire.PostgreSql;
+using MedTracker.Infrastructure.Jobs;
 
 namespace MedTracker.Infrastructure;
 
@@ -107,9 +110,33 @@ public static class DependencyInjection
         services.AddSingleton<ICatalogCacheInvalidator, CatalogCacheInvalidator>();
         services.AddSingleton<IRateLimiter, RedisRateLimiter>();
         services.AddSingleton<IUserStatusCache, UserStatusCache>();
+        
+        // ── Background jobs (Hangfire) ──
+        services.AddScoped<IOutboxJob, OutboxJob>();
+        services.AddScoped<ICleanupService, CleanupService>();
 
-        // ── Outbox background processor ──
-        services.AddHostedService<OutboxProcessor>();
+        var pgConnection = configuration.GetConnectionString("DefaultConnection")!;
+        services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(pgConnection),
+                new PostgreSqlStorageOptions
+                {
+                    SchemaName = "hangfire",
+                    PrepareSchemaIfNecessary = true,
+                    QueuePollInterval = TimeSpan.FromSeconds(5),
+                    DistributedLockTimeout = TimeSpan.FromMinutes(1)
+                }));
+
+        services.AddHangfireServer(opts =>
+        {
+            opts.WorkerCount = Environment.ProcessorCount * 2;
+            opts.Queues = new[] { "default" };
+            opts.ServerName = $"medtracker:{Environment.MachineName}:{Guid.NewGuid().ToString()[..8]}";
+        });
+
+        services.AddHostedService<RecurringJobsRegistrar>();
 
         // ── JWT Authentication ──
         var jwtSecret = configuration["Jwt:Secret"]
@@ -131,6 +158,8 @@ public static class DependencyInjection
                     ClockSkew = TimeSpan.Zero
                 };
             });
+        
+        
 
         return services;
     }

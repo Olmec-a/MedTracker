@@ -24,6 +24,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(e => e.FullName).HasMaxLength(200).IsRequired();
         builder.Property(e => e.Role).HasConversion<string>().HasMaxLength(20);
         builder.Property(e => e.FailedLoginAttempts).HasDefaultValue(0);
+        
 
         // Email confirmation
         builder.Property(e => e.EmailConfirmed).HasDefaultValue(false);
@@ -37,6 +38,7 @@ public class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessage
     public void Configure(EntityTypeBuilder<OutboxMessage> builder)
     {
         builder.HasKey(e => e.Id);
+        builder.Property(m => m.CorrelationId).HasMaxLength(128);
 
         builder.Property(e => e.MessageType).HasMaxLength(50).IsRequired();
         builder.Property(e => e.ToAddress).HasMaxLength(254).IsRequired();

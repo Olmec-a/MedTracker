@@ -25,6 +25,7 @@ public class AuthService : IAuthService
     private readonly ITokenGenerator _tokenGenerator;
     private readonly IEmailTemplateService _emailTemplates;
     private readonly IAppUrlBuilder _urlBuilder;
+    private readonly ICorrelationIdAccessor _correlationIdAccessor;
     private readonly IValidator<RegisterDto> _registerValidator;
     private readonly IValidator<LoginDto> _loginValidator;
     private readonly IValidator<ChangePasswordDto> _changePasswordValidator;
@@ -50,7 +51,8 @@ public class AuthService : IAuthService
         IValidator<ResendConfirmationDto> resendValidator,
         IValidator<RequestPasswordResetDto> requestResetValidator,
         IValidator<ResetPasswordDto> resetValidator,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        ICorrelationIdAccessor correlationIdAccessor)
     {
         _userRepo = userRepo;
         _refreshTokenRepo = refreshTokenRepo;
@@ -68,6 +70,7 @@ public class AuthService : IAuthService
         _requestResetValidator = requestResetValidator;
         _resetValidator = resetValidator;
         _logger = logger;
+        _correlationIdAccessor = correlationIdAccessor;
     }
 
     public async Task<AuthResultDto> RegisterAsync(RegisterDto dto, CancellationToken ct = default)
@@ -308,7 +311,8 @@ public class AuthService : IAuthService
             ToAddress = user.Email,
             Subject = template.Subject,
             BodyHtml = template.HtmlBody,
-            BodyPlainText = template.PlainBody
+            BodyPlainText = template.PlainBody,
+            CorrelationId = _correlationIdAccessor.Current  // ← новое поле
         }, ct);
 
         await _userRepo.SaveChangesAsync(ct);
@@ -362,7 +366,8 @@ public class AuthService : IAuthService
             ToAddress = user.Email,
             Subject = template.Subject,
             BodyHtml = template.HtmlBody,
-            BodyPlainText = template.PlainBody
+            BodyPlainText = template.PlainBody,
+            CorrelationId = _correlationIdAccessor.Current  // ← новое поле
         }, ct);
     }
 
