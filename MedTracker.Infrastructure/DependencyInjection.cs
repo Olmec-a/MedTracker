@@ -9,8 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
-using SendGrid;
-using SendGrid.Extensions.DependencyInjection;
 using StackExchange.Redis;
 using Hangfire;
 using Hangfire.PostgreSql;
@@ -90,27 +88,23 @@ public static class DependencyInjection
         services.AddScoped<IExcelImportService, ExcelImportService>();
 
         // ── Email + URL builder ──
-        services.Configure<SendGridOptions>(configuration.GetSection("SendGrid"));
+        services.Configure<SmtpOptions>(configuration.GetSection("Smtp"));
         services.Configure<AppUrlOptions>(configuration.GetSection("App"));
         services.Configure<OutboxOptions>(configuration.GetSection("Outbox"));
 
         services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
         services.AddSingleton<IAppUrlBuilder, AppUrlBuilder>();
 
-        var sendGridApiKey = configuration["SendGrid:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(sendGridApiKey))
-            services.AddSendGrid(opt => opt.ApiKey = sendGridApiKey);
-        else
-            services.AddSingleton<ISendGridClient>(_ => new SendGridClient(""));
-
-        services.AddScoped<IEmailSender, SendGridEmailSender>();
+        // SMTP email sender (MailKit). Конфигурация — секция "Smtp" в appsettings.
+        // Для Mailtrap (dev sandbox) см. SmtpOptions.cs.
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
 
         // ── Redis-based abstractions (catalog cache, rate limiter, user-status cache) ──
         services.AddSingleton<ICatalogVersionStore, CatalogVersionStore>();
         services.AddSingleton<ICatalogCacheInvalidator, CatalogCacheInvalidator>();
         services.AddSingleton<IRateLimiter, RedisRateLimiter>();
         services.AddSingleton<IUserStatusCache, UserStatusCache>();
-        
+
         // ── Background jobs (Hangfire) ──
         services.AddScoped<IOutboxJob, OutboxJob>();
         services.AddScoped<ICleanupService, CleanupService>();
@@ -158,8 +152,6 @@ public static class DependencyInjection
                     ClockSkew = TimeSpan.Zero
                 };
             });
-        
-        
 
         return services;
     }

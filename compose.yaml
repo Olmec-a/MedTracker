@@ -26,8 +26,6 @@
       - "6379:6379"
     volumes:
       - medtracker-redis-data:/data
-    # AOF persistence: чтобы DataProtection-ключи переживали перезапуск Redis.
-    # Иначе при рестарте контейнера выданные ранее protected payloads инвалидируются.
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -40,10 +38,7 @@
     build:
       context: .
       dockerfile: MedTracker.Grpc/Dockerfile
-    # container_name УБРАН — конфликтует с `docker compose up --scale medtracker-api=N`
     restart: unless-stopped
-    # ports УБРАНЫ — при scale>1 нельзя мапить один host-порт на несколько контейнеров.
-    # Внешний доступ теперь через nginx ниже.
     expose:
       - "5001"
       - "5003"
@@ -55,9 +50,14 @@
       Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
       Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
       Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
-    # volumes УБРАНЫ:
-    #  - medtracker-keys не нужен (DataProtection-ключи в Redis)
-    #  - medtracker-logs не нужен (Serilog пишет в stdout, читается через `docker logs`)
+      # ── SMTP (Mailtrap для dev) ──
+      Smtp__Host: ${SMTP_HOST:-sandbox.smtp.mailtrap.io}
+      Smtp__Port: ${SMTP_PORT:-2525}
+      Smtp__UseStartTls: ${SMTP_USE_STARTTLS:-true}
+      Smtp__Username: ${SMTP_USERNAME:?missing}
+      Smtp__Password: ${SMTP_PASSWORD:?missing}
+      Smtp__FromAddress: ${SMTP_FROM_ADDRESS:-noreply@medtracker.local}
+      Smtp__FromName: ${SMTP_FROM_NAME:-MedTracker Dev}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5003/health/live"]
       interval: 30s
@@ -70,18 +70,13 @@
       medtracker-redis:
         condition: service_healthy
 
-  # nginx как L7 load balancer для gRPC (HTTP/2) и health-эндпоинтов.
-  # Нужен потому что:
-  #   1) docker compose port-mapping не работает с --scale>1
-  #   2) gRPC поверх голого L4-балансировщика держит persistent connection
-  #      на один под — размазывания нагрузки не будет.
   medtracker-lb:
     image: nginx:1.27-alpine
     container_name: medtracker-lb
     restart: unless-stopped
     ports:
-      - "5001:5001"  # gRPC (HTTP/2)
-      - "5003:5003"  # health/HTTP
+      - "5001:5001"
+      - "5003:5003"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
