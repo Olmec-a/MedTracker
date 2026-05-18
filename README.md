@@ -113,24 +113,7 @@ MedTracker API — это backend для медицинского трекера
 - .NET 10 SDK
 - `kind`, `kubectl` (для K8s-варианта): `brew install kind kubectl`
 
-### Вариант 1: Docker Compose (быстрее)
-
-```bash
-# 1. Скопировать .env.example в .env и заполнить
-cp .env.example .env
-# Отредактировать .env, заполнить пароли и SMTP credentials
-
-# 2. Поднять всё
-docker compose up -d --scale medtracker-api=3
-
-# 3. Проверка
-grpcurl -plaintext localhost:5001 list
-curl http://localhost:5003/health/live
-```
-
-Откроется на `localhost:5001` (gRPC) с nginx-балансировщиком на 3 реплики API.
-
-### Вариант 2: Kubernetes через kind (production-shaped)
+### Kubernetes через kind
 
 ```bash
 # 1. Поднять инфраструктуру (Postgres, Redis, pgbouncer) в compose
@@ -153,34 +136,6 @@ kubectl get pods,hpa -n medtracker
 - применяет манифесты через Kustomize
 
 Снести: `./scripts/k8s-down.sh`
-
-## Конфигурация
-
-Все секреты — через `.env` (не коммитится в Git). См. `.env.example` для полного списка переменных:
-
-```
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<your_password>
-POSTGRES_DB=medtracker
-
-# JWT (минимум 32 символа)
-JWT_SECRET=<random_secret_at_least_32_chars>
-JWT_ISSUER=MedTracker
-JWT_AUDIENCE=MedTrackerClients
-
-# SMTP (для dev — Mailtrap.io)
-SMTP_HOST=sandbox.smtp.mailtrap.io
-SMTP_PORT=2525
-SMTP_USERNAME=<from_mailtrap>
-SMTP_PASSWORD=<from_mailtrap>
-SMTP_FROM_ADDRESS=noreply@medtracker.local
-SMTP_FROM_NAME=MedTracker
-```
-
-Несекретная конфигурация (логирование, JWT issuer, поля SMTP без credentials) — в `appsettings.json` и `appsettings.Development.json`.
-
-В Kubernetes секреты подставляются в `Secret` через kustomize-patch из template (`k8s/overlays/dev/secret-patch.template.yaml`). Скрипт `k8s-up.sh` генерирует финальный `secret-patch.yaml` из вашего `.env`.
 
 ## Структура проекта
 
@@ -210,46 +165,7 @@ MedTracker/
 
 ## Разработка
 
-### Миграции
-
-```bash
-# Создать миграцию
-dotnet ef migrations add <Name> --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
-
-# Применить (compose, БД на порту 5434)
-ConnectionStrings__DefaultConnection="Host=localhost;Port=5434;Database=medtracker;Username=postgres;Password=<pwd>" \
-  dotnet ef database update --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
-
-# Применить через pgbouncer (для K8s-варианта — Hangfire нужна session-mode DB)
-ConnectionStrings__DefaultConnection="Host=localhost;Port=6432;Database=medtracker_admin;Username=postgres;Password=<pwd>" \
-  dotnet ef database update --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
 ```
-
-### Запуск без контейнеров
-
-```bash
-# Поднять только инфру в compose
-docker compose up -d medtracker-db medtracker-redis medtracker-pgbouncer
-
-# Запустить API из IDE / dotnet run
-dotnet run --project MedTracker.Grpc
-```
-
-Для локального запуска секреты можно положить в `dotnet user-secrets`:
-
-```bash
-cd MedTracker.Grpc
-dotnet user-secrets init
-dotnet user-secrets set "Smtp:Username" "<from_mailtrap>"
-dotnet user-secrets set "Smtp:Password" "<from_mailtrap>"
-```
-
-### Тесты
-
-```bash
-dotnet test
-```
-
 ### Тестирование HPA
 
 ```bash
@@ -273,18 +189,7 @@ watch -n 2 'kubectl get hpa,pods -n medtracker'
 **pgbouncer с двумя пулами.** В transaction mode (`pool_mode=transaction`) переиспользует серверные соединения между транзакциями разных клиентов — это работает для EF Core CRUD. Hangfire требует session mode (использует LISTEN/NOTIFY и advisory locks), поэтому отдельная база `medtracker_admin` в session mode. Один pgbouncer-контейнер, два пула. См. `pgbouncer.ini`.
 
 **Design-time DbContext.** `AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>` позволяет EF Core CLI работать без полного запуска приложения. Это решает проблему миграций в multi-replica деплое: миграции применяются отдельным шагом до подъёма подов, не через auto-migrate в `Program.cs` (где была бы race между репликами).
-
-## Roadmap
-
-- [ ] Migration Job через `efbundle` в Dockerfile (сейчас миграции прогоняются с хоста)
-- [ ] TLS через cert-manager
-- [ ] Observability: Prometheus + Grafana + Loki + OpenTelemetry
-- [ ] CI/CD pipeline (GitHub Actions)
-- [ ] Production-ready Helm chart
-
 ## Лицензия
-
-MIT — см. [LICENSE](LICENSE).
 
 ## Автор
 
