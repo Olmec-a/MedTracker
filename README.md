@@ -1,832 +1,295 @@
-# MedTracker — Документация
+# MedTracker API
 
-gRPC-микросервис для учёта приёма лекарственных средств по гинекологическим диагнозам (ПМР, СПКЯ, Эндометриоз, Менопауза).
+Production-shaped gRPC backend на .NET 10 для трекинга приёма медикаментов, добавок и побочных эффектов. Чистая архитектура, multi-replica deploy в Kubernetes, distributed state в Redis, outbox-паттерн для надёжной отправки писем.
 
----
-
-## Содержание
-
-1. [Быстрый старт](#быстрый-старт)
-2. [Архитектура](#архитектура)
-3. [Схема базы данных](#схема-базы-данных)
-4. [API Reference](#api-reference)
-5. [Аутентификация и безопасность](#аутентификация-и-безопасность)
-6. [Гайд для фронтенда](#гайд-для-фронтенда)
-7. [Импорт справочных данных](#импорт-справочных-данных)
-8. [Коды ошибок](#коды-ошибок)
-9. [Переменные окружения](#переменные-окружения)
-10. [Troubleshooting](#troubleshooting)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D)](https://redis.io/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-kind-326CE5)](https://kubernetes.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-## Быстрый старт
+## О проекте
 
-### Предварительные требования
-- Docker Desktop
-- .NET 10 SDK (для локальной разработки)
-- PostgreSQL 16 (опционально — есть в Docker)
+MedTracker API — это backend для медицинского трекера, выросший из учебного pet-проекта в production-shaped сервис. Главная инженерная задача — построить систему, которая корректно работает при горизонтальном масштабировании: общий rate limit между репликами, единый keyring для шифрования, отдельный воркер для фоновых задач, гарантированная доставка писем при падении SMTP.
 
-### Запуск через Docker
+Этот репозиторий — не «hello world», а **рабочий пример того, как один gRPC-сервис деплоится в Kubernetes с правильным учётом stateful-аспектов**.
 
-```bash
-# 1. Создай .env из шаблона
-cp .env.example .env
+## Tech Stack
 
-# 2. Сгенерируй JWT-секрет (минимум 32 символа)
-openssl rand -base64 48
-# Вставь результат в .env как JWT_SECRET=...
+**Backend**
+- .NET 10 / ASP.NET Core (gRPC)
+- Entity Framework Core 10 + Npgsql
+- FluentValidation, Serilog
+- BCrypt, JWT (JwtBearer)
+- MailKit (SMTP)
+- Hangfire (background jobs)
+- HybridCache (L1 in-memory + L2 Redis)
 
-##КИНУ ГОТОВЫЙ .ENV  в личку
+**Хранилища**
+- PostgreSQL 16 (основные данные + Hangfire schema)
+- Redis 7 (rate limit, DataProtection keys, cache, user status)
+- pgbouncer (connection pooling: transaction + session modes)
 
-# 3. Запусти
-docker-compose up --build
-```
+**Инфраструктура**
+- Docker Compose (локальная инфра)
+- Kubernetes / kind (multi-replica deploy)
+- Kustomize (overlays для dev/prod)
+- ingress-nginx (gRPC-aware L7 балансировка)
+- HorizontalPodAutoscaler (CPU-based)
 
-Сервис доступен:
-- `http://localhost:5001` — HTTP/2 (gRPC)
-- `https://localhost:5002` — HTTPS (self-signed dev cert)
-- PostgreSQL: `localhost:5434`
-
-### Локальная разработка
-
-```bash
-# 1. Настрой connection string в appsettings.Development.json
-# 2. Создай базу
-createdb medtracker
-
-# 3. Примени миграции
-cd MedTracker.Grpc
-dotnet ef database update \
-  --project ../MedTracker.Infrastructure \
-  --startup-project .
-
-# 4. Запусти
-dotnet run
-```
-
----
+**Архитектурные паттерны**
+- Clean Architecture (Domain / Application / Infrastructure / Grpc)
+- Outbox pattern для надёжной асинхронной отправки писем
+- Distributed rate limiting через Redis sliding window
+- CQRS-light через repository pattern
 
 ## Архитектура
 
-### Clean Architecture — слои
-
 ```
-┌─────────────────────────────────────────────────────┐
-│  MedTracker.Grpc                                    │
-│  - gRPC service implementations                     │
-│  - Interceptors (Auth, Exception, RateLimit)        │
-│  - Program.cs (startup, Kestrel, DI)                │
-└──────────────────┬──────────────────────────────────┘
-                   │ depends on
-                   ▼
-┌─────────────────────────────────────────────────────┐
-│  MedTracker.Infrastructure                          │
-│  - AppDbContext, EF configurations                  │
-│  - Repositories                                     │
-│  - JwtService, ExcelImportService, PasswordHasher   │
-└──────────────────┬──────────────────────────────────┘
-                   │ depends on
-                   ▼
-┌─────────────────────────────────────────────────────┐
-│  MedTracker.Application                             │
-│  - Interfaces (IServices, IRepositories)            │
-│  - Services (бизнес-логика)                         │
-│  - DTOs, Validators                                 │
-└──────────────────┬──────────────────────────────────┘
-                   │ depends on
-                   ▼
-┌─────────────────────────────────────────────────────┐
-│  MedTracker.Domain                                  │
-│  - Entities                                         │
-│  - Enums                                            │
-│  - Domain Exceptions                                │
-└─────────────────────────────────────────────────────┘
-```
-
-**Правило зависимостей:** внутренние слои ничего не знают о внешних. Domain — чистый C#, без зависимостей. Application знает только Domain. Infrastructure реализует интерфейсы Application. Grpc — композиционный слой.
-
-### Технический стек
-
-| Категория | Технология |
-|---|---|
-| Runtime | .NET 10, C# 13 |
-| Транспорт | gRPC (Protobuf v3) |
-| БД | PostgreSQL 16 + EF Core 10 (Code-First) |
-| Аутентификация | JWT Bearer + Refresh tokens в БД |
-| Хеширование паролей | BCrypt |
-| Логирование | Serilog (console + файл) |
-| Валидация | FluentValidation |
-| Парсинг Excel | EPPlus |
-| Контейнеризация | Docker + docker-compose |
-
-### Ключевые решения
-
-- **gRPC вместо REST** — строгая типизация, code-gen клиентов, эффективность
-- **Refresh-токены в БД, не JWT** — возможность отзыва, rotation chain с replay detection
-- **Soft delete** через `IsDeleted` + query filters — для пользовательских данных (UserMedication, UserSupplement, логи, cycle entries)
-- **jsonb для Symptoms** в `MenstrualCycleEntry` — избегаем отдельной таблицы для списка строк
-- **Транзакционный импорт Excel** — всё или ничего; rollback при любой ошибке
-- **Client streaming** для загрузки файлов — позволяет слать большие файлы чанками
-
----
-
-## Схема базы данных
-
-### Основные сущности
-
-**User** — пользователь системы
-- `Id` (Guid, PK)
-- `Login` (unique, string) — логин
-- `PasswordHash` — BCrypt hash
-- `FullName`, `Age`
-- `Role` (User / Admin)
-- `FailedLoginAttempts`, `LockoutUntil` — защита от брутфорса
-- `CreatedAt`, `UpdatedAt`
-
-**Diagnosis** — справочник диагнозов (4 записи в seed)
-- ПМР, СПКЯ, Эндометриоз, Менопауза
-
-**UserDiagnosis** — M2M связь User ↔ Diagnosis (пользователь может иметь несколько диагнозов)
-
-**Medication** — справочник ЛС
-- Связан с `Diagnosis`
-- `HormonalGroup`, `INN`, `TradeName`, `Dosage`, `Form`, `Frequency`, `Diet`
-
-**Supplement** — БАДы, зависящие от Medication
-
-**SideEffect** — побочные эффекты, зависящие от Medication
-
-**UserMedication** — ЛС, назначенные пользователю
-- `StartDate`, `EndDate`, `IsActive`
-- Soft deletable
-
-**UserSupplement** — аналогично для БАДов
-
-**UserSideEffectLog** — журнал побочек
-- `Date`, `Intensity` (Low/Medium/High/Severe), `Comment`
-
-**ExternalMedication** — сторонние ЛС (не из справочника)
-- `Name`, `Dosage`, `Date`, `Comment`
-
-**MenstrualCycleEntry** — записи о цикле
-- `StartDate`, `EndDate` (nullable — цикл может быть в процессе)
-- `Intensity` (Light/Moderate/Heavy/VeryHeavy)
-- `Symptoms` — массив строк в `jsonb`
-- `Notes`
-
-**RefreshToken** — хранилище refresh-токенов
-- `Token`, `ExpiresAt`, `IsRevoked`, `RevokedAt`
-- `ReplacedByTokenId` — цепочка ротации для replay detection
-
-**ImportRecord** — история административных импортов
-- `FileName`, `DiagnosisName`, `RecordsImported`, `ImportedAt`, `ImportedBy`
-
-### Связи
-
-```
-User ──┬─< UserDiagnosis >── Diagnosis
-       ├─< UserMedication >── Medication ──< Supplement
-       ├─< UserSupplement ───── Supplement     └─< SideEffect
-       ├─< UserSideEffectLog ── SideEffect
-       ├─< ExternalMedication
-       ├─< MenstrualCycleEntry
-       └─< RefreshToken
+                            ┌──────────────────────┐
+                            │   gRPC clients       │
+                            │   (mobile, web, ...) │
+                            └──────────┬───────────┘
+                                       │ HTTP/2
+                            ┌──────────▼───────────┐
+                            │   ingress-nginx      │
+                            │   (gRPC L7 LB)       │
+                            └──────────┬───────────┘
+                                       │
+                  ┌────────────────────┼────────────────────┐
+                  ▼                    ▼                    ▼
+            ┌──────────┐         ┌──────────┐         ┌──────────┐
+            │  API #1  │         │  API #2  │         │  API #3  │
+            │ (HPA-    │         │          │         │          │
+            │  managed)│         │          │         │          │
+            └────┬─────┘         └─────┬────┘         └────┬─────┘
+                 │                     │                   │
+                 └─────────┬───────────┴───────────┬───────┘
+                           │                       │
+                  ┌────────▼─────────┐    ┌────────▼────────┐
+                  │      Redis       │    │   pgbouncer     │
+                  │  (rate limit,    │    │  (transaction   │
+                  │   cache, keys)   │    │   pool)         │
+                  └──────────────────┘    └────────┬────────┘
+                                                   │
+                                          ┌────────▼────────┐
+                                          │   PostgreSQL    │
+                                          │   (data +       │
+                                          │    Hangfire)    │
+                                          └────────▲────────┘
+                                                   │
+                                          ┌────────┴────────┐
+                                          │    Worker       │
+                                          │  (Hangfire:     │
+                                          │   outbox,       │
+                                          │   cleanup)      │
+                                          └────────┬────────┘
+                                                   │ SMTP
+                                          ┌────────▼────────┐
+                                          │  Mail provider  │
+                                          │  (Mailtrap/...) │
+                                          └─────────────────┘
 ```
 
----
-
-## API Reference
-
-Все методы доступны по адресу `localhost:5001` (HTTP/2) или `localhost:5002` (HTTPS).
-
-**Authorization:** JWT в gRPC metadata:
-```
-authorization: Bearer <access_token>
-```
-
-Публичные методы (без auth): `AuthService/Register`, `AuthService/Login`, `AuthService/RefreshToken`.
-Методы с ролью Admin: все в `AdminService`.
-
----
-
-### AuthService
-
-#### `Register`
-
-Регистрация нового пользователя.
-
-**Request:**
-```json
-{
-  "login": "maria",
-  "password": "password123",
-  "full_name": "Иванова Мария Петровна",
-  "age": 32
-}
-```
-
-**Response:**
-```json
-{
-  "access_token": "eyJhbGci...",
-  "refresh_token": "base64string...",
-  "expires_at": 1713456789
-}
-```
-
-**Ошибки:** `INVALID_ARGUMENT` (валидация), `ALREADY_EXISTS` (логин занят), `RESOURCE_EXHAUSTED` (rate limit).
-
-#### `Login`
-
-**Request:**
-```json
-{ "login": "maria", "password": "password123" }
-```
-
-**Response:** как у Register.
-
-**Защита от брутфорса:** 5 неудачных попыток → аккаунт блокируется на 15 минут. Rate limit: 5 попыток в минуту с одного IP.
-
-**Ошибки:** `UNAUTHENTICATED` (неверный пароль, блокировка аккаунта), `RESOURCE_EXHAUSTED`.
-
-#### `RefreshToken`
-
-Обновление пары токенов.
-
-**Request:**
-```json
-{ "refresh_token": "<старый refresh>" }
-```
-
-**Response:** новая пара токенов.
-
-**⚠ Важно:** refresh-токены **одноразовые** (rotation). При использовании возвращается новая пара, старый токен отзывается. **Повторное использование уже отозванного токена** → все сессии пользователя инвалидируются (replay detection).
-
----
-
-### UserProfileService
-
-#### `GetProfile`
-
-**Request:** `{}` (Empty)
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "login": "maria",
-  "full_name": "Иванова Мария Петровна",
-  "age": 32,
-  "created_at": "2026-04-01T10:00:00Z",
-  "updated_at": "2026-04-18T14:30:00Z"
-}
-```
-
-#### `UpdateProfile`
-
-**Request:**
-```json
-{ "full_name": "Новое ФИО", "age": 33 }
-```
-
-Валидация: возраст 10-120, ФИО ≤ 200 символов.
-
-#### `AssignDiagnoses`
-
-Назначает список диагнозов пользователю (перезаписывает существующие).
-
-**Request:**
-```json
-{
-  "diagnosis_ids": [
-    "10000000-0000-0000-0000-000000000001",
-    "10000000-0000-0000-0000-000000000002"
-  ]
-}
-```
-
-**Seed UUIDs диагнозов:**
-- ПМР — `10000000-0000-0000-0000-000000000001`
-- СПКЯ — `10000000-0000-0000-0000-000000000002`
-- Эндометриоз — `10000000-0000-0000-0000-000000000003`
-- Менопауза — `10000000-0000-0000-0000-000000000004`
-
-#### `GetMyDiagnoses`
-
-**Request:** `{}`
-
-**Response:**
-```json
-{
-  "diagnoses": [
-    {
-      "diagnosis_id": "uuid",
-      "diagnosis_name": "СПКЯ",
-      "assigned_at": "2026-04-01T10:00:00Z"
-    }
-  ]
-}
-```
-
----
-
-### MedicationCatalogService
-
-#### `GetDiagnoses`
-
-Список всех диагнозов. Request: `{}`.
-
-#### `GetMedicationsByDiagnosis`
-
-**Request:** `{ "diagnosis_id": "uuid" }`
-
-**Response:**
-```json
-{
-  "medications": [
-    {
-      "id": "uuid",
-      "diagnosis_id": "uuid",
-      "hormonal_group": "Комбинированные ОК",
-      "inn": "Дроспиренон+Этинилэстрадиол",
-      "trade_name": "Джес",
-      "dosage": "3 мг + 0.02 мг",
-      "form": "Таблетки",
-      "frequency": "1 р/день",
-      "diet": "Ограничить жирное"
-    }
-  ]
-}
-```
-
-#### `GetSupplementsByMedication`
-
-**Request:** `{ "medication_id": "uuid" }`
-
-**Response:** список БАДов с `id`, `medication_id`, `name`, `dosage`, `frequency`.
-
-#### `GetSideEffectsByMedication`
-
-**Request:** `{ "medication_id": "uuid" }`
-
-**Response:** список побочек с `id`, `medication_id`, `name`.
-
----
-
-### UserMedicationService
-
-#### `AssignMedication`
-
-**Request:**
-```json
-{
-  "medication_id": "uuid",
-  "start_date": "2026-04-01T00:00:00Z",
-  "end_date": "2026-07-01T00:00:00Z"
-}
-```
-
-`end_date` опционально (приём может быть бессрочным).
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "medication_id": "uuid",
-  "medication_trade_name": "Джес",
-  "medication_inn": "Дроспиренон+Этинилэстрадиол",
-  "start_date": "...",
-  "end_date": "...",
-  "is_active": true
-}
-```
-
-#### `RemoveMedication`
-
-**Request:** `{ "user_medication_id": "uuid" }`. Soft delete.
-
-#### `GetMyMedications`
-
-Request: `{}`. Вернёт все назначения пользователя (включая неактивные).
-
-#### `AssignSupplement`, `RemoveSupplement`, `GetMySupplements`
-
-Аналогично для БАДов.
-
----
-
-### SideEffectLogService
-
-#### `LogSideEffect`
-
-**Request:**
-```json
-{
-  "side_effect_id": "uuid",
-  "date": "2026-04-15T10:30:00Z",
-  "intensity": "SIDE_EFFECT_INTENSITY_MEDIUM",
-  "comment": "После утренней таблетки"
-}
-```
-
-Значения `intensity`: `SIDE_EFFECT_INTENSITY_LOW`, `_MEDIUM`, `_HIGH`, `_SEVERE`.
-
-#### `GetMySideEffectLogs`
-
-**Request:**
-```json
-{
-  "date_range": {
-    "from": "2026-04-01T00:00:00Z",
-    "to": "2026-04-30T23:59:59Z"
-  },
-  "pagination": { "page": 1, "page_size": 20 }
-}
-```
-
-`date_range` и `pagination` опциональны.
-
-**Response:** `logs[]`, `total_count`.
-
-#### `DeleteSideEffectLog`
-
-`{ "log_id": "uuid" }` — soft delete.
-
----
-
-### ExternalMedicationService
-
-Сторонние ЛС (не из справочника). Структура запросов и методов аналогична `SideEffectLogService`:
-- `AddExternalMedication` — { name, dosage, date, comment? }
-- `GetMyExternalMedications` — с фильтром по датам и пагинацией
-- `DeleteExternalMedication` — { id }
-
----
-
-### MenstrualCycleService
-
-#### `AddCycleEntry`
-
-**Request:**
-```json
-{
-  "start_date": "2026-04-01T00:00:00Z",
-  "end_date": "2026-04-06T00:00:00Z",
-  "intensity": "CYCLE_INTENSITY_MODERATE",
-  "symptoms": ["боль внизу живота", "усталость"],
-  "notes": "Обычный цикл"
-}
-```
-
-Значения `intensity`: `CYCLE_INTENSITY_LIGHT`, `_MODERATE`, `_HEAVY`, `_VERY_HEAVY`.
-
-`end_date` опционально — цикл может быть в процессе.
-
-#### `UpdateCycleEntry`
-
-Как `AddCycleEntry`, но с обязательным `id`.
-
-#### `GetCycleHistory`
-
-С фильтром по `date_range` и пагинацией. Фильтрация по `StartDate`.
-
-#### `DeleteCycleEntry`
-
-`{ "id": "uuid" }` — soft delete.
-
----
-
-### AdminService
-
-**Требует роль `Admin`.** Назначение роли через SQL:
-```sql
-UPDATE "Users" SET "Role" = 'Admin' WHERE "Login" = 'admin';
-```
-
-#### `ImportMedicationData` — client streaming RPC
-
-Загружает Excel-файл с лекарствами, БАДами и побочками для указанного диагноза.
-
-**Client stream chunks:**
-```json
-{
-  "chunk_data": "<bytes (base64)>",
-  "file_name": "spkya.xlsx",
-  "diagnosis_name": "СПКЯ"
-}
-```
-
-Клиент отправляет N чанков (для больших файлов), затем закрывает стрим — сервер парсит собранный файл и возвращает результат.
-
-**Response (unary):**
-```json
-{
-  "success": true,
-  "medications_imported": 25,
-  "supplements_imported": 47,
-  "side_effects_imported": 83,
-  "message": "Successfully imported..."
-}
-```
-
-Формат Excel — см. [Импорт справочных данных](#импорт-справочных-данных).
-
-#### `GetImportHistory`
-
-Request: `{}`. Вернёт список всех импортов с автором и датой.
-
----
-
-## Аутентификация и безопасность
-
-### Модель токенов
-
-- **Access token** — JWT, 15 минут, HS256-подпись
-  - Claims: `sub` (user_id), `unique_name` (login), `role`, `jti`
-- **Refresh token** — криптостойкая случайная строка (64 байта, base64), 7 дней
-  - Хранится в БД в таблице `RefreshTokens`
-  - Rotation: при каждом использовании отзывается, создаётся новый
-  - Replay detection: попытка использовать отозванный токен → все сессии пользователя инвалидируются
-
-### Уровни защиты
-
-1. **Rate limiting** (per IP):
-   - Login: 5 попыток / мин
-   - Register: 3 / час
-   - RefreshToken: 10 / мин
-
-2. **Account lockout:**
-   - 5 неудачных попыток входа → блокировка на 15 минут
-   - Счётчик сбрасывается при успешном входе или после истечения блокировки
-
-3. **Password hashing:** BCrypt (cost factor 11 по умолчанию)
-
-4. **JWT secret validation:** сервис не стартует, если секрет < 32 символов
-
-5. **TLS:** в dev — self-signed на порту 5002, в prod — через volume-смонтированный сертификат
-
-6. **Секреты через env-vars:** никаких plain-text паролей в коде или docker-compose
-
-### Флоу авторизации
-
-```
-┌──────┐                          ┌────────┐
-│Client│                          │ Server │
-└───┬──┘                          └────┬───┘
-    │  POST /Register или /Login      │
-    ├────────────────────────────────>│
-    │                                  │
-    │  AuthResponse(access, refresh)  │
-    │<────────────────────────────────┤
-    │                                  │
-    │  Любой защищённый вызов          │
-    │  Metadata: authorization: Bearer │
-    ├────────────────────────────────>│
-    │                                  │
-    │  (через ~15 мин access истёк)   │
-    │  Server: 401 UNAUTHENTICATED    │
-    │<────────────────────────────────┤
-    │                                  │
-    │  POST /RefreshToken { old }     │
-    ├────────────────────────────────>│
-    │                                  │
-    │  Новая пара токенов              │
-    │  (старый refresh отозван)        │
-    │<────────────────────────────────┤
-    │                                  │
-    │  Повтор исходного запроса       │
-    │  с новым access                 │
-    ├────────────────────────────────>│
-```
-
----
-
-## Гайд для фронтенда
-
-### Протокол: gRPC-Web
-
-Браузеры не поддерживают обычный gRPC (нет HTTP/2 trailer'ов в fetch). Используется **gRPC-Web** поверх HTTP/1.1.
-
-⚠️ **Для работы с браузером нужно добавить на сервер:**
-
-```xml
-<!-- MedTracker.Grpc.csproj -->
-<PackageReference Include="Grpc.AspNetCore.Web" Version="2.67.0" />
-```
-
-```csharp
-// Program.cs — после builder.Build()
-app.UseGrpcWeb(new GrpcWebOptions { DefaultEnabled = true });
-
-// CORS (если фронт на другом origin)
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy => policy
-        .WithOrigins("http://localhost:5173")
-        .AllowAnyMethod()
-        .AllowAnyHeader()
-        .WithExposedHeaders("Grpc-Status", "Grpc-Message", "Grpc-Encoding", "Grpc-Accept-Encoding"));
-});
-// app.UseCors() после app.Build()
-```
-
-### Генерация TypeScript-клиента
-
-Скопировать `.proto` файлы из `MedTracker.Grpc/Protos/` к себе, затем:
+**Ключевые решения:**
+
+| Проблема | Решение |
+|----------|---------|
+| Rate limit между репликами | Redis sliding window через atomic Lua script |
+| Шифрование cookies/токенов при rolling restart | DataProtection keys в Redis, общий keyring |
+| Hangfire-воркеры × N реплик = нагрузка на БД | Разделение API (без worker) и отдельный Worker-pod |
+| 100 connection slots Postgres переполняются | pgbouncer с двумя пулами: transaction + session |
+| Hangfire не работает в transaction mode | Отдельная DB `medtracker_admin` в session mode |
+| Гарантия доставки писем при падении SMTP | Outbox pattern: сохраняем в БД, шлём из Hangfire с retry |
+| Реальный client IP теряется за ingress | Парсинг `X-Real-IP` / `X-Forwarded-For` из заголовков |
+
+## Быстрый старт
+
+### Требования
+
+- Docker Desktop (Mac / Linux / Windows)
+- .NET 10 SDK
+- `kind`, `kubectl` (для K8s-варианта): `brew install kind kubectl`
+
+### Вариант 1: Docker Compose (быстрее)
 
 ```bash
-npm install --save-dev @protobuf-ts/plugin @protobuf-ts/grpcweb-transport
+# 1. Скопировать .env.example в .env и заполнить
+cp .env.example .env
+# Отредактировать .env, заполнить пароли и SMTP credentials
 
-protoc \
-  --plugin=protoc-gen-ts=./node_modules/.bin/protoc-gen-ts \
-  --ts_out=./src/generated \
-  --proto_path=./protos \
-  ./protos/*.proto
+# 2. Поднять всё
+docker compose up -d --scale medtracker-api=3
+
+# 3. Проверка
+grpcurl -plaintext localhost:5001 list
+curl http://localhost:5003/health/live
 ```
 
-### Пример вызова
+Откроется на `localhost:5001` (gRPC) с nginx-балансировщиком на 3 реплики API.
 
-```typescript
-import { GrpcWebFetchTransport } from '@protobuf-ts/grpcweb-transport';
-import { AuthServiceClient } from './generated/auth.client';
-
-const transport = new GrpcWebFetchTransport({
-  baseUrl: 'http://localhost:5001'
-});
-
-const authClient = new AuthServiceClient(transport);
-
-const { response } = await authClient.login({
-  login: 'maria',
-  password: 'password123'
-});
-
-localStorage.setItem('access_token', response.accessToken);
-```
-
-### Авторизованный запрос
-
-```typescript
-const metadata = {
-  authorization: `Bearer ${localStorage.getItem('access_token')}`
-};
-
-const { response } = await userProfileClient.getProfile({}, { meta: metadata });
-```
-
-### Обработка 401 и refresh
-
-```typescript
-async function callWithRefresh<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err: any) {
-    if (err.code === 'UNAUTHENTICATED') {
-      const refresh = localStorage.getItem('refresh_token');
-      const { response } = await authClient.refreshToken({ refreshToken: refresh });
-
-      localStorage.setItem('access_token', response.accessToken);
-      localStorage.setItem('refresh_token', response.refreshToken);
-
-      return await fn(); // retry один раз
-    }
-    throw err;
-  }
-}
-```
-
-### Хранение токенов — best practices
-
-- **access_token** — в памяти (state management), истекает быстро
-- **refresh_token** — httpOnly cookie с `Secure` и `SameSite=Strict` флагами (требует серверной настройки)
-- **Минимум** — localStorage (уязвим к XSS, но допустимо для dev)
-
-### Типы данных — подводные камни
-
-| Proto type | TS type (протогенератор) | Заметка |
-|---|---|---|
-| `string` (UUID) | `string` | Формат `"uuid-4-format"` |
-| `google.protobuf.Timestamp` | `{ seconds, nanos }` или `Date` | Зависит от генератора |
-| `int32`, `int64` | `number` / `bigint` | `int64` может быть `string` в JSON |
-| `enum` | `number` или enum-имя | `SIDE_EFFECT_INTENSITY_MEDIUM` |
-| nullable `string` (`Comment`, `Notes`) | `string` (приходит как `""`) | Не `null`! |
-| `repeated string` (`Symptoms`) | `string[]` | |
-
----
-
-## Импорт справочных данных
-
-### Формат Excel-файла
-
-**Первая строка — заголовки** (порядок не важен, регистр учитывается):
-
-| Колонка | Обязательна | Описание |
-|---|---|---|
-| Гормональные препараты | ✓ | Категория/группа ЛС |
-| МНН | ✓ | Международное непатентованное наименование (или "Международное непатентованное наименование") |
-| Торговое наименование | ✓ | Бренд |
-| Доза | ✓ | Дозировка (мг, мкг) |
-| Форма применения | ✓ | Таблетки, капсулы, инъекции |
-| Частота применения | ✓ | Схема приёма (1 р/день) |
-| Диета |  | Рекомендации по питанию |
-| БАД |  | БАДы через запятую или точку с запятой |
-| Побочные эффекты |  | Эффекты через запятую или точку с запятой |
-
-### Пример строки
-
-| Гормональные препараты | МНН | Торговое наименование | Доза | Форма | Частота | Диета | БАД | Побочные |
-|---|---|---|---|---|---|---|---|---|
-| Комбинированные ОК | Дроспиренон+Этинилэстрадиол | Джес | 3 мг + 0.02 мг | Таблетки | 1 р/день | Ограничить жирное | Омега-3, Магний B6 | Тошнота, Головная боль |
-
-### Парсинг
-
-- БАДы и побочки парсятся по запятой или точке с запятой → отдельные строки в `Supplements` / `SideEffects`
-- Пустые строки пропускаются (строка считается пустой если пустые и МНН, и Торговое название)
-- Импорт **транзакционный** — при ошибке на любой строке ничего не сохраняется
-- Запись в `ImportRecords` создаётся после успеха
-
-### Тестирование через grpcurl
+### Вариант 2: Kubernetes через kind (production-shaped)
 
 ```bash
-# 1. Получить токен админа
-TOKEN=$(grpcurl -plaintext -d '{"login":"admin","password":"..."}' \
-  localhost:5001 medtracker.AuthService/Login | jq -r .access_token)
+# 1. Поднять инфраструктуру (Postgres, Redis, pgbouncer) в compose
+docker compose up -d medtracker-db medtracker-redis medtracker-pgbouncer
 
-# 2. Импорт
-grpcurl -plaintext \
-  -H "authorization: Bearer $TOKEN" \
-  -d @ localhost:5001 medtracker.AdminService/ImportMedicationData <<EOF
-{
-  "file_name": "spkya.xlsx",
-  "diagnosis_name": "СПКЯ",
-  "chunk_data": "$(base64 -i spkya.xlsx)"
-}
-EOF
+# 2. Поднять K8s-кластер с API и Worker
+./scripts/k8s-up.sh
+
+# 3. Проверка
+grpcurl -plaintext localhost:5001 list
+kubectl get pods,hpa -n medtracker
 ```
 
----
+Скрипт автоматически:
+- создаёт kind-кластер с правильными port mappings
+- ставит ingress-nginx и metrics-server
+- собирает Docker-образ и грузит в kind
+- генерирует Secret-патч из вашего `.env`
+- прогоняет EF Core миграции
+- применяет манифесты через Kustomize
 
-## Коды ошибок
+Снести: `./scripts/k8s-down.sh`
 
-| gRPC Code | HTTP eq. | Когда возникает |
-|---|---|---|
-| `OK` | 200 | Успех |
-| `INVALID_ARGUMENT` | 400 | Ошибка валидации (FluentValidation), невалидный UUID, отсутствуют колонки в Excel |
-| `UNAUTHENTICATED` | 401 | Нет токена, истёкший/невалидный токен, неверный пароль, блокировка аккаунта |
-| `PERMISSION_DENIED` | 403 | Доступ к чужой записи, AdminService без роли Admin |
-| `NOT_FOUND` | 404 | Сущность не найдена по ID |
-| `ALREADY_EXISTS` | 409 | Дубликат (занятый логин при регистрации) |
-| `RESOURCE_EXHAUSTED` | 429 | Rate limit |
-| `INTERNAL` | 500 | Необработанная ошибка сервера |
+## Конфигурация
 
-Маппинг реализован в `ExceptionInterceptor`. Все доменные исключения (`NotFoundException`, `DuplicateException`, `DomainValidationException`, `UnauthorizedException`, `ForbiddenException`) автоматически конвертируются в соответствующие gRPC Status.
+Все секреты — через `.env` (не коммитится в Git). См. `.env.example` для полного списка переменных:
 
----
+```
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<your_password>
+POSTGRES_DB=medtracker
 
-## Переменные окружения
+# JWT (минимум 32 символа)
+JWT_SECRET=<random_secret_at_least_32_chars>
+JWT_ISSUER=MedTracker
+JWT_AUDIENCE=MedTrackerClients
 
-В `.env` (см. `.env.example`):
+# SMTP (для dev — Mailtrap.io)
+SMTP_HOST=sandbox.smtp.mailtrap.io
+SMTP_PORT=2525
+SMTP_USERNAME=<from_mailtrap>
+SMTP_PASSWORD=<from_mailtrap>
+SMTP_FROM_ADDRESS=noreply@medtracker.local
+SMTP_FROM_NAME=MedTracker
+```
 
-| Переменная | Обязательна | По умолчанию | Описание |
-|---|---|---|---|
-| `POSTGRES_USER` | ✓ | — | Пользователь БД |
-| `POSTGRES_PASSWORD` | ✓ | — | Пароль |
-| `POSTGRES_DB` | ✓ | — | Имя базы |
-| `JWT_SECRET` | ✓ | — | Секрет JWT (≥ 32 символа, сгенерировать `openssl rand -base64 48`) |
-| `JWT_ISSUER` |  | `MedTracker` | Issuer |
-| `JWT_AUDIENCE` |  | `MedTrackerClients` | Audience |
-| `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` |  | `15` | Время жизни access token |
+Несекретная конфигурация (логирование, JWT issuer, поля SMTP без credentials) — в `appsettings.json` и `appsettings.Development.json`.
 
----
+В Kubernetes секреты подставляются в `Secret` через kustomize-patch из template (`k8s/overlays/dev/secret-patch.template.yaml`). Скрипт `k8s-up.sh` генерирует финальный `secret-patch.yaml` из вашего `.env`.
 
-## Troubleshooting
+## Структура проекта
 
-### "JWT secret must be at least 32 characters"
-Сгенерируй нормальный секрет: `openssl rand -base64 48` и положи в `.env`.
+```
+MedTracker/
+├── MedTracker.Domain/          # Entities, value objects, domain exceptions
+├── MedTracker.Application/     # Use cases, DTOs, validators, service interfaces
+├── MedTracker.Infrastructure/  # EF Core, repositories, external services, Hangfire jobs
+├── MedTracker.Grpc/            # gRPC services, interceptors, .proto files, Program.cs
+├── MedTracker.Tests/           # Unit tests
+├── MedTracker.IntegrationTests/# Integration tests
+│
+├── compose.yaml                # Docker Compose (Postgres + Redis + pgbouncer + API + nginx)
+├── pgbouncer.ini               # Connection pooler config
+├── nginx.conf                  # LB для compose-варианта
+│
+├── k8s/                        # Kubernetes manifests
+│   ├── kind-config.yaml
+│   ├── base/                   # базовые ресурсы
+│   └── overlays/dev/           # dev-overlay с patch для секретов
+│
+└── scripts/
+    ├── k8s-up.sh               # one-command bootstrap K8s
+    ├── k8s-down.sh             # teardown
+    └── load-test.sh            # нагрузочное тестирование (для HPA)
+```
 
-### "Bind for 0.0.0.0:5434 failed: port is already allocated"
-Занят порт хоста. Либо выключи конфликтующий сервис, либо поменяй маппинг в `docker-compose.yml`: `"5435:5432"`.
+## Разработка
 
-### "password authentication failed for user"
-Volume от старого запуска с другим паролем. Снести: `docker-compose down -v`.
+### Миграции
 
-### "relation __EFMigrationsHistory does not exist"
-Нормально при первом запуске — EF создаст таблицу вместе с миграциями.
+```bash
+# Создать миграцию
+dotnet ef migrations add <Name> --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
 
-### "The name 'InitialCreate' is used by an existing migration"
-Миграции закешированы в `bin/` или `obj/`. Почистить: `dotnet clean && find . -name "*InitialCreate*"`.
+# Применить (compose, БД на порту 5434)
+ConnectionStrings__DefaultConnection="Host=localhost;Port=5434;Database=medtracker;Username=postgres;Password=<pwd>" \
+  dotnet ef database update --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
 
-### "value too long for type character varying(N)"
-Длина поля в БД меньше, чем присылаемые данные. Увеличить `HasMaxLength` в конфигурации сущности, создать новую миграцию.
+# Применить через pgbouncer (для K8s-варианта — Hangfire нужна session-mode DB)
+ConnectionStrings__DefaultConnection="Host=localhost;Port=6432;Database=medtracker_admin;Username=postgres;Password=<pwd>" \
+  dotnet ef database update --project MedTracker.Infrastructure --startup-project MedTracker.Grpc
+```
 
-### Postman: "Could not load server reflection"
-Сервис работает на HTTP/1.1 или TLS. Включить HTTP/2 в Kestrel (см. `Program.cs`), в Postman отключить TLS для `localhost:5001`.
+### Запуск без контейнеров
 
-### gRPC-Web в браузере не работает
-На сервере не настроен gRPC-Web. См. секцию [Гайд для фронтенда](#гайд-для-фронтенда) — добавить пакет `Grpc.AspNetCore.Web` и `app.UseGrpcWeb()`.
+```bash
+# Поднять только инфру в compose
+docker compose up -d medtracker-db medtracker-redis medtracker-pgbouncer
 
----
+# Запустить API из IDE / dotnet run
+dotnet run --project MedTracker.Grpc
+```
 
-**Автор:** Vlad  
-**Стек:** .NET 10 · gRPC · PostgreSQL 16 · Docker  
-**Репозиторий:** /Users/vladbelyavtsev/Documents/MedTracker/
+Для локального запуска секреты можно положить в `dotnet user-secrets`:
+
+```bash
+cd MedTracker.Grpc
+dotnet user-secrets init
+dotnet user-secrets set "Smtp:Username" "<from_mailtrap>"
+dotnet user-secrets set "Smtp:Password" "<from_mailtrap>"
+```
+
+### Тесты
+
+```bash
+dotnet test
+```
+
+### Тестирование HPA
+
+```bash
+# В одном терминале — наблюдение
+watch -n 2 'kubectl get hpa,pods -n medtracker'
+
+# В другом — нагрузка
+./scripts/load-test.sh 30 localhost:5001 180
+```
+
+Через ~60 секунд после старта load-test увидите, как HPA добавляет реплики при росте CPU выше 70%.
+
+## Что внутри: интересные технические детали
+
+**Distributed rate limiter.** Per-client sliding window в Redis через atomic Lua script. Извлекает реальный IP клиента из `X-Real-IP` / `X-Forwarded-For`, не теряет точность за ingress. См. `MedTracker.Grpc/Interceptors/RateLimitInterceptor.cs`.
+
+**Outbox pattern.** Все письма сохраняются в `OutboxMessages` в одной транзакции с бизнес-данными. Hangfire-job каждую минуту забирает batch'ем (с advisory lock через `LockToken`/`LockedUntil`), отправляет через SMTP, помечает `ProcessedAt`. Гарантирует at-least-once-доставку, не теряет письма при перезапуске. См. `MedTracker.Infrastructure/Services/OutboxJob.cs`.
+
+**Hangfire mode-switch.** Один и тот же Docker-образ работает как API (`Hangfire__RunServer=false`) или как Worker (`RunServer=true`, `RegisterRecurringJobs=true`). В K8s API-pods не запускают worker-потоки, Worker-pod — единственная реплика, держит все 4 worker'а. Снижает нагрузку на БД, упрощает scaling. См. `MedTracker.Infrastructure/Services/HangfireOptions.cs`.
+
+**pgbouncer с двумя пулами.** В transaction mode (`pool_mode=transaction`) переиспользует серверные соединения между транзакциями разных клиентов — это работает для EF Core CRUD. Hangfire требует session mode (использует LISTEN/NOTIFY и advisory locks), поэтому отдельная база `medtracker_admin` в session mode. Один pgbouncer-контейнер, два пула. См. `pgbouncer.ini`.
+
+**Design-time DbContext.** `AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>` позволяет EF Core CLI работать без полного запуска приложения. Это решает проблему миграций в multi-replica деплое: миграции применяются отдельным шагом до подъёма подов, не через auto-migrate в `Program.cs` (где была бы race между репликами).
+
+## Roadmap
+
+- [ ] Migration Job через `efbundle` в Dockerfile (сейчас миграции прогоняются с хоста)
+- [ ] TLS через cert-manager
+- [ ] Observability: Prometheus + Grafana + Loki + OpenTelemetry
+- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] Production-ready Helm chart
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE).
+
+## Автор
+
+<!-- TODO: добавить свои ссылки
+- GitHub: [@username](https://github.com/username)
+- LinkedIn: [Your Name](https://linkedin.com/in/yourname)
+- Email: you@example.com
+-->
