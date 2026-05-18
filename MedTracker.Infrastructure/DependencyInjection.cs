@@ -21,6 +21,8 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         // ── PostgreSQL + EF Core ──
+        // DefaultConnection = transaction-mode пул (pgbouncer port 6432, db=medtracker).
+        // Подходит для обычных EF-запросов (SELECT/INSERT/UPDATE).
         services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -36,20 +38,15 @@ public static class DependencyInjection
         redisOptions.ConnectRetry = 3;
         redisOptions.ConnectTimeout = 5000;
 
-        // Создаём multiplexer один раз и переиспользуем — для DI и для DataProtection.
-        // AbortOnConnectFail=false означает, что если Redis ещё не поднялся — Connect() не бросит,
-        // multiplexer перейдёт в "ConnectionFailed" state и будет переподключаться сам.
         var multiplexer = ConnectionMultiplexer.Connect(redisOptions);
         services.AddSingleton<IConnectionMultiplexer>(multiplexer);
 
-        // IDistributedCache на Redis — нужен HybridCache как L2.
         services.AddStackExchangeRedisCache(opts =>
         {
             opts.Configuration = redisConnection;
             opts.InstanceName = "medtracker:";
         });
 
-        // HybridCache (L1 in-memory + L2 IDistributedCache).
         services.AddHybridCache(opts =>
         {
             opts.DefaultEntryOptions = new Microsoft.Extensions.Caching.Hybrid.HybridCacheEntryOptions
@@ -59,7 +56,6 @@ public static class DependencyInjection
             };
         });
 
-        // ── DataProtection: ключи в Redis — общий keyring для всех реплик ──
         services.AddDataProtection()
             .PersistKeysToStackExchangeRedis(multiplexer, "medtracker:DataProtection-Keys")
             .SetApplicationName("MedTracker");
@@ -94,27 +90,38 @@ public static class DependencyInjection
 
         services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
         services.AddSingleton<IAppUrlBuilder, AppUrlBuilder>();
-
-        // SMTP email sender (MailKit). Конфигурация — секция "Smtp" в appsettings.
-        // Для Mailtrap (dev sandbox) см. SmtpOptions.cs.
         services.AddScoped<IEmailSender, SmtpEmailSender>();
 
-        // ── Redis-based abstractions (catalog cache, rate limiter, user-status cache) ──
+        // ── Redis-based abstractions ──
         services.AddSingleton<ICatalogVersionStore, CatalogVersionStore>();
         services.AddSingleton<ICatalogCacheInvalidator, CatalogCacheInvalidator>();
         services.AddSingleton<IRateLimiter, RedisRateLimiter>();
         services.AddSingleton<IUserStatusCache, UserStatusCache>();
 
         // ── Background jobs (Hangfire) ──
+        // Client (IBackgroundJobClient, RecurringJob.AddOrUpdate) регистрируется ВСЕГДА.
+        // Server (worker pool) и recurring jobs — условно (см. HangfireOptions).
+
+        var hangfireOptions = new HangfireOptions();
+        configuration.GetSection("Hangfire").Bind(hangfireOptions);
+        services.Configure<HangfireOptions>(configuration.GetSection("Hangfire"));
+
         services.AddScoped<IOutboxJob, OutboxJob>();
         services.AddScoped<ICleanupService, CleanupService>();
 
-        var pgConnection = configuration.GetConnectionString("DefaultConnection")!;
+        // Hangfire требует session-mode соединение (использует LISTEN/NOTIFY).
+        // Через pgbouncer transaction-mode это не работает.
+        // ConnectionStrings:Hangfire — отдельная строка, указывает на pgbouncer database
+        // "medtracker_admin" с pool_mode=session. Fallback на DefaultConnection —
+        // для локального запуска без pgbouncer.
+        var hangfireConnection = configuration.GetConnectionString("Hangfire")
+            ?? configuration.GetConnectionString("DefaultConnection")!;
+
         services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(pgConnection),
+            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(hangfireConnection),
                 new PostgreSqlStorageOptions
                 {
                     SchemaName = "hangfire",
@@ -123,14 +130,20 @@ public static class DependencyInjection
                     DistributedLockTimeout = TimeSpan.FromMinutes(1)
                 }));
 
-        services.AddHangfireServer(opts =>
+        if (hangfireOptions.RunServer)
         {
-            opts.WorkerCount = Environment.ProcessorCount * 2;
-            opts.Queues = new[] { "default" };
-            opts.ServerName = $"medtracker:{Environment.MachineName}:{Guid.NewGuid().ToString()[..8]}";
-        });
+            services.AddHangfireServer(opts =>
+            {
+                opts.WorkerCount = hangfireOptions.WorkerCount ?? Environment.ProcessorCount * 2;
+                opts.Queues = new[] { "default" };
+                opts.ServerName = $"medtracker:{Environment.MachineName}:{Guid.NewGuid().ToString()[..8]}";
+            });
+        }
 
-        services.AddHostedService<RecurringJobsRegistrar>();
+        if (hangfireOptions.RegisterRecurringJobs)
+        {
+            services.AddHostedService<RecurringJobsRegistrar>();
+        }
 
         // ── JWT Authentication ──
         var jwtSecret = configuration["Jwt:Secret"]

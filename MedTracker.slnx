@@ -3,6 +3,7 @@
     <File Path=".env" />
     <File Path="compose.yaml" />
     <File Path="Nginx.conf" />
+    <File Path="Pgbouncer.ini" />
   </Folder>
   <Project Path="MedTracker.Application/MedTracker.Application.csproj" />
   <Project Path="MedTracker.Domain/MedTracker.Domain.csproj" />

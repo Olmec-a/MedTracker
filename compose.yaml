@@ -11,12 +11,51 @@
       - "5434:5432"
     volumes:
       - medtracker-pgdata:/var/lib/postgresql/data
+    # max_connections=200 как страховка: pgbouncer держит ~20-40 соединений,
+    # но если кто-то подключится напрямую (миграции через 5434) — будет запас.
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  medtracker-pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: medtracker-pgbouncer
+    restart: unless-stopped
+    environment:
+      # edoburu/pgbouncer на старте генерирует userlist.txt из этих переменных
+      DB_HOST: medtracker-db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      AUTH_TYPE: scram-sha-256
+      # Эти параметры тоже подставляются в pgbouncer.ini, но мы их переопределяем
+      # через свой кастомный конфиг ниже (см. volumes). Оставляем для совместимости.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+    volumes:
+      # Кастомный pgbouncer.ini переопределяет дефолтный — нужен для двух БД с разными pool_mode
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    ports:
+      # Опционально: проброс на хост для отладки через psql
+      - "6432:6432"
+    depends_on:
+      medtracker-db:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "pgbouncer", "-V" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   medtracker-redis:
     image: redis:7-alpine
@@ -44,13 +83,15 @@
       - "5003"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Host=medtracker-db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      # Основной трафик API → pgbouncer (transaction mode), db=medtracker.
+      ConnectionStrings__DefaultConnection: "Host=medtracker-pgbouncer;Port=6432;Database=medtracker;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};No Reset On Close=true"
+      # Hangfire → pgbouncer (session mode), db=medtracker_admin.
+      ConnectionStrings__Hangfire: "Host=medtracker-pgbouncer;Port=6432;Database=medtracker_admin;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};No Reset On Close=true"
       ConnectionStrings__Redis: "medtracker-redis:6379"
       Jwt__Secret: ${JWT_SECRET:?missing}
       Jwt__Issuer: ${JWT_ISSUER:-MedTracker}
       Jwt__Audience: ${JWT_AUDIENCE:-MedTrackerClients}
       Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-15}
-      # ── SMTP (Mailtrap для dev) ──
       Smtp__Host: ${SMTP_HOST:-sandbox.smtp.mailtrap.io}
       Smtp__Port: ${SMTP_PORT:-2525}
       Smtp__UseStartTls: ${SMTP_USE_STARTTLS:-true}
@@ -58,6 +99,7 @@
       Smtp__Password: ${SMTP_PASSWORD:?missing}
       Smtp__FromAddress: ${SMTP_FROM_ADDRESS:-noreply@medtracker.local}
       Smtp__FromName: ${SMTP_FROM_NAME:-MedTracker Dev}
+      Hangfire__WorkerCount: 4
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5003/health/live"]
       interval: 30s
@@ -65,7 +107,7 @@
       retries: 3
       start_period: 20s
     depends_on:
-      medtracker-db:
+      medtracker-pgbouncer:
         condition: service_healthy
       medtracker-redis:
         condition: service_healthy
